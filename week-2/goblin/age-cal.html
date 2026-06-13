@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>생년월일 분석기 — 만나이 · 띠 · 별자리</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up { animation: fadeInUp 0.45s ease-out both; }
+    body { -webkit-font-smoothing: antialiased; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useMemo } = React;
+
+    // ========================================
+    // 🧮 Domain Logic — 계산 유틸리티
+    // ========================================
+
+    // 만 나이 계산 (오늘 날짜 기준, 생일 경과 여부 반영)
+    function calcKoreanAge(year, month, day, today) {
+      let age = today.getFullYear() - year;
+      const monthDiff = today.getMonth() + 1 - month;  // today.getMonth()는 0-base
+      const dayDiff = today.getDate() - day;
+      // 생일이 아직 지나지 않았으면 1살 차감
+      if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+        age -= 1;
+      }
+      return age;
+    }
+
+    // 12지신 띠 계산 (연도 기준)
+    // 기준: 2020년 = 쥐띠. (year - 4) % 12 == 0 이 쥐.
+    const ZODIAC_ANIMALS = [
+      { name: '쥐',   emoji: '🐭' },
+      { name: '소',   emoji: '🐮' },
+      { name: '호랑이', emoji: '🐯' },
+      { name: '토끼',  emoji: '🐰' },
+      { name: '용',   emoji: '🐲' },
+      { name: '뱀',   emoji: '🐍' },
+      { name: '말',   emoji: '🐴' },
+      { name: '양',   emoji: '🐑' },
+      { name: '원숭이', emoji: '🐵' },
+      { name: '닭',   emoji: '🐔' },
+      { name: '개',   emoji: '🐶' },
+      { name: '돼지',  emoji: '🐷' },
+    ];
+
+    function calcChineseZodiac(year) {
+      // (year - 4) % 12: 1900년=쥐, 1924년=쥐, 2020년=쥐 ...
+      let idx = (year - 4) % 12;
+      if (idx < 0) idx += 12;
+      return ZODIAC_ANIMALS[idx];
+    }
+
+    // 서양 별자리 계산 (월/일 기준, 경계 정확 처리)
+    // 각 별자리의 시작일(month, day)을 기준으로 판별
+    const STAR_SIGNS = [
+      { name: '염소자리',  symbol: '♑', emoji: '🐐', start: [12, 22] },
+      { name: '물병자리',  symbol: '♒', emoji: '🏺', start: [1, 20] },
+      { name: '물고기자리', symbol: '♓', emoji: '🐟', start: [2, 19] },
+      { name: '양자리',   symbol: '♈', emoji: '🐏', start: [3, 21] },
+      { name: '황소자리',  symbol: '♉', emoji: '🐂', start: [4, 20] },
+      { name: '쌍둥이자리', symbol: '♊', emoji: '👯', start: [5, 21] },
+      { name: '게자리',   symbol: '♋', emoji: '🦀', start: [6, 22] },
+      { name: '사자자리',  symbol: '♌', emoji: '🦁', start: [7, 23] },
+      { name: '처녀자리',  symbol: '♍', emoji: '👰', start: [8, 23] },
+      { name: '천칭자리',  symbol: '♎', emoji: '⚖️', start: [9, 23] },
+      { name: '전갈자리',  symbol: '♏', emoji: '🦂', start: [10, 23] },
+      { name: '사수자리',  symbol: '♐', emoji: '🏹', start: [11, 22] },
+    ];
+
+    function calcStarSign(month, day) {
+      // 염소자리는 12/22 ~ 1/19 로 연도를 가로지름 → 먼저 처리
+      if ((month === 12 && day >= 22) || (month === 1 && day <= 19)) {
+        return STAR_SIGNS[0]; // 염소자리
+      }
+      // 나머지 별자리: start[i] <= 날짜 < start[i+1]
+      for (let i = 1; i < STAR_SIGNS.length; i++) {
+        const [sm, sd] = STAR_SIGNS[i].start;
+        const next = STAR_SIGNS[i + 1] || STAR_SIGNS[0];
+        const [em, ed] = next.start;
+        const afterStart = month > sm || (month === sm && day >= sd);
+        const beforeEnd = month < em || (month === em && day < ed);
+        if (afterStart && beforeEnd) {
+          return STAR_SIGNS[i];
+        }
+      }
+      return STAR_SIGNS[0];
+    }
+
+    // 날짜 유효성 검증 (실제 존재하는 날짜인지 + 미래 아닌지)
+    function validateDate(year, month, day, today) {
+      if (!year || !month || !day) {
+        return { valid: false, message: '생년월일을 모두 입력해 주세요.' };
+      }
+      const y = Number(year), m = Number(month), d = Number(day);
+      if (y < 1900 || y > today.getFullYear()) {
+        return { valid: false, message: `연도는 1900년 ~ ${today.getFullYear()}년 사이로 입력해 주세요.` };
+      }
+      // 실제 존재하는 날짜인지 검사 (예: 2월 30일 방지)
+      const probe = new Date(y, m - 1, d);
+      if (probe.getFullYear() !== y || probe.getMonth() !== m - 1 || probe.getDate() !== d) {
+        return { valid: false, message: '존재하지 않는 날짜입니다. 다시 확인해 주세요.' };
+      }
+      // 미래 날짜 방지
+      const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      if (probe > todayMidnight) {
+        return { valid: false, message: '미래 날짜는 입력할 수 없습니다.' };
+      }
+      return { valid: true, message: '' };
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-lg shadow-indigo-100/60 border border-gray-100 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Button({ children, onClick, variant = 'primary', disabled = false, type = 'button', className = '' }) {
+      const base = 'inline-flex items-center justify-center font-semibold rounded-xl px-6 py-3 transition-all duration-200 focus:outline-none focus:ring-4 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white hover:from-indigo-600 hover:to-purple-700 hover:shadow-lg hover:shadow-purple-200 focus:ring-purple-200',
+        ghost: 'bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-gray-200',
+      };
+      return (
+        <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
+          {children}
+        </button>
+      );
+    }
+
+    function ResultCard({ label, emoji, title, subtitle, accent }) {
+      return (
+        <Card className={`p-6 flex flex-col items-center text-center animate-fade-in-up ${accent}`}>
+          <span className="text-xs font-bold tracking-widest text-gray-400 uppercase mb-3">{label}</span>
+          <div className="text-5xl mb-3" aria-hidden="true">{emoji}</div>
+          <div className="text-2xl font-extrabold text-gray-800">{title}</div>
+          {subtitle && <div className="text-sm text-gray-500 mt-1">{subtitle}</div>}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 BirthForm — 입력 폼 컴포넌트
+    // ========================================
+
+    function BirthForm({ dateValue, onChange, onSubmit, error, maxDate }) {
+      return (
+        <Card className="p-6 sm:p-8">
+          <form
+            onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+            className="space-y-5"
+          >
+            <div>
+              <label htmlFor="birth" className="block text-sm font-semibold text-gray-700 mb-2">
+                생년월일을 입력하세요
+              </label>
+              <input
+                id="birth"
+                type="date"
+                value={dateValue}
+                max={maxDate}
+                min="1900-01-01"
+                onChange={(e) => onChange(e.target.value)}
+                className={`w-full px-4 py-3 rounded-xl border text-gray-800 text-lg focus:outline-none focus:ring-4 transition
+                  ${error
+                    ? 'border-red-300 focus:ring-red-100 focus:border-red-400'
+                    : 'border-gray-200 focus:ring-indigo-100 focus:border-indigo-400'}`}
+                aria-invalid={!!error}
+                aria-describedby={error ? 'birth-error' : undefined}
+              />
+            </div>
+
+            {error && (
+              <div
+                id="birth-error"
+                role="alert"
+                className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3"
+              >
+                <span aria-hidden="true">⚠️</span>
+                <span>{error}</span>
+              </div>
+            )}
+
+            <Button type="submit" className="w-full">
+              결과 확인하기 ✨
+            </Button>
+          </form>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 Results — 결과 표시 컴포넌트
+    // ========================================
+
+    function Results({ result }) {
+      const { age, animal, sign, dateLabel } = result;
+      return (
+        <div className="space-y-5">
+          <p className="text-center text-gray-500 text-sm">
+            <span className="font-semibold text-gray-700">{dateLabel}</span> 생 분석 결과입니다
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <ResultCard
+              label="만 나이"
+              emoji="🎂"
+              title={`만 ${age}세`}
+              subtitle="오늘 기준"
+              accent="hover:-translate-y-1 transition-transform"
+            />
+            <ResultCard
+              label="띠 (12지신)"
+              emoji={animal.emoji}
+              title={`${animal.name}띠`}
+              subtitle="음력 기준 아닌 양력 연도 기준"
+              accent="hover:-translate-y-1 transition-transform"
+            />
+            <ResultCard
+              label="별자리"
+              emoji={sign.emoji}
+              title={sign.name}
+              subtitle={sign.symbol}
+              accent="hover:-translate-y-1 transition-transform"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+
+    function App() {
+      const today = useMemo(() => new Date(), []);
+      const maxDate = useMemo(() => {
+        const y = today.getFullYear();
+        const m = String(today.getMonth() + 1).padStart(2, '0');
+        const d = String(today.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }, [today]);
+
+      const [dateValue, setDateValue] = useState('');
+      const [error, setError] = useState('');
+      const [result, setResult] = useState(null);
+
+      const handleSubmit = () => {
+        setResult(null);
+        if (!dateValue) {
+          setError('생년월일을 입력해 주세요.');
+          return;
+        }
+        const [yStr, mStr, dStr] = dateValue.split('-');
+        const year = Number(yStr), month = Number(mStr), day = Number(dStr);
+
+        const check = validateDate(year, month, day, today);
+        if (!check.valid) {
+          setError(check.message);
+          return;
+        }
+
+        setError('');
+        const age = calcKoreanAge(year, month, day, today);
+        const animal = calcChineseZodiac(year);
+        const sign = calcStarSign(month, day);
+        const dateLabel = `${year}년 ${month}월 ${day}일`;
+        setResult({ age, animal, sign, dateLabel });
+      };
+
+      const handleChange = (val) => {
+        setDateValue(val);
+        if (error) setError('');
+      };
+
+      return (
+        <div className="max-w-3xl mx-auto px-4 py-10 sm:py-16">
+          {/* 헤더 */}
+          <header className="text-center mb-8">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">
+              🔮 생년월일 분석기
+            </h1>
+            <p className="text-gray-500 mt-3">
+              생년월일을 입력하면 <span className="font-semibold text-gray-700">만 나이 · 띠 · 별자리</span>를 한 번에 알려드려요
+            </p>
+          </header>
+
+          {/* 입력 폼 */}
+          <BirthForm
+            dateValue={dateValue}
+            onChange={handleChange}
+            onSubmit={handleSubmit}
+            error={error}
+            maxDate={maxDate}
+          />
+
+          {/* 결과 영역 */}
+          {result && (
+            <section className="mt-8" aria-live="polite">
+              <Results result={result} />
+            </section>
+          )}
+
+          {/* 결과 없을 때 안내 (빈 상태) */}
+          {!result && !error && (
+            <p className="text-center text-gray-400 text-sm mt-8">
+              생년월일을 입력하고 버튼을 눌러보세요 👆
+            </p>
+          )}
+
+          {/* 푸터 */}
+          <footer className="text-center text-xs text-gray-400 mt-12">
+            <p>만 나이는 오늘({today.getFullYear()}.{today.getMonth() + 1}.{today.getDate()}) 기준으로 계산됩니다.</p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>D-Day 카운터</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* 게이지 채워질 때 부드러운 전환 (Tailwind transition만으론 한계 보완) */
+    @keyframes pop {
+      0% { transform: scale(0.95); opacity: 0.6; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .seg-fill { animation: pop 0.3s ease; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // ========================================
+    // 유틸리티 함수
+    // ========================================
+
+    // 'YYYY-MM-DD' 문자열을 로컬 자정 기준 Date로 파싱 (타임존 이슈 방지)
+    function parseDate(str) {
+      if (!str) return null;
+      const [y, m, d] = str.split('-').map(Number);
+      if (!y || !m || !d) return null;
+      return new Date(y, m - 1, d);
+    }
+
+    // 오늘 날짜를 로컬 자정 기준 Date로 반환
+    function getToday() {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+
+    // 두 날짜 간 일수 차이 (b - a), 자정 기준
+    function diffDays(a, b) {
+      const MS = 1000 * 60 * 60 * 24;
+      return Math.round((b.getTime() - a.getTime()) / MS);
+    }
+
+    // D-day 라벨 계산 (남은 일수 기준)
+    // remaining = 목표일 - 오늘. 양수면 D-N, 0이면 D-DAY, 음수면 D+N
+    function ddayLabel(remaining) {
+      if (remaining > 0) return `D-${remaining}`;
+      if (remaining === 0) return 'D-DAY';
+      return `D+${Math.abs(remaining)}`;
+    }
+
+    // 진행률 계산 (0~100). 시작일 없으면 0 반환.
+    function calcProgress(startStr, targetStr, today) {
+      const start = parseDate(startStr);
+      const target = parseDate(targetStr);
+      if (!start || !target) return 0;
+      const total = diffDays(start, target);
+      if (total <= 0) return 0;
+      const elapsed = diffDays(start, today);
+      const pct = (elapsed / total) * 100;
+      return Math.max(0, Math.min(100, Math.round(pct)));
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    function Button({ variant = 'primary', size = 'md', disabled, onClick, type = 'button', className = '', children }) {
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm',
+        secondary: 'bg-slate-200 hover:bg-slate-300 text-slate-700',
+        danger: 'bg-red-500 hover:bg-red-600 text-white',
+        ghost: 'bg-transparent hover:bg-slate-100 text-slate-600',
+      };
+      const sizes = {
+        sm: 'px-2.5 py-1 text-xs',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-6 py-3 text-base',
+      };
+      return (
+        <button
+          type={type}
+          disabled={disabled}
+          onClick={onClick}
+          className={`rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ type = 'text', label, value, onChange, placeholder, error, className = '' }) {
+      return (
+        <div className={`flex flex-col gap-1 ${className}`}>
+          {label && <label className="text-sm font-medium text-slate-600">{label}</label>}
+          <input
+            type={type}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            className={`rounded-lg border px-3 py-2 text-sm outline-none transition-colors focus:ring-2 focus:ring-indigo-300 ${error ? 'border-red-400 bg-red-50' : 'border-slate-300'}`}
+          />
+        </div>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-md p-5 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 진행률 게이지 (20% 5칸 분할)
+    // ========================================
+
+    function ProgressGauge({ percent }) {
+      // 5칸: 각 칸은 20% 구간. 채워진 정도를 칸별로 계산.
+      const segments = [0, 1, 2, 3, 4];
+      // 구간별 색상 (통과할수록 강조)
+      const segColors = [
+        'bg-sky-400',
+        'bg-teal-400',
+        'bg-green-400',
+        'bg-amber-400',
+        'bg-rose-500',
+      ];
+
+      return (
+        <div>
+          <div className="flex justify-between items-center mb-1.5">
+            <span className="text-xs font-medium text-slate-500">진행률</span>
+            <span className="text-sm font-bold text-indigo-600">{percent}% 진행</span>
+          </div>
+          <div className="flex gap-1">
+            {segments.map((i) => {
+              const segStart = i * 20;
+              // 이 칸이 채워진 비율 (0~1)
+              const ratio = Math.max(0, Math.min(1, (percent - segStart) / 20));
+              return (
+                <div
+                  key={i}
+                  className="relative flex-1 h-4 rounded-md bg-slate-200 overflow-hidden"
+                  title={`${segStart}~${segStart + 20}%`}
+                >
+                  {ratio > 0 && (
+                    <div
+                      className={`seg-fill absolute inset-y-0 left-0 ${segColors[i]} transition-all duration-500`}
+                      style={{ width: `${ratio * 100}%` }}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* 20% 단위 눈금 라벨 */}
+          <div className="flex justify-between mt-1 text-[10px] text-slate-400 px-0.5">
+            <span>0%</span><span>20%</span><span>40%</span><span>60%</span><span>80%</span><span>100%</span>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 목표 카드
+    // ========================================
+
+    function GoalCard({ goal, today, onDelete }) {
+      const target = parseDate(goal.targetDate);
+      const remaining = target ? diffDays(today, target) : 0;
+      const label = ddayLabel(remaining);
+      const percent = calcProgress(goal.startDate, goal.targetDate, today);
+      const hasStart = !!goal.startDate;
+
+      // D-day 라벨 색상
+      const labelColor =
+        remaining > 0 ? 'text-indigo-600' : remaining === 0 ? 'text-rose-500' : 'text-slate-400';
+
+      return (
+        <Card className="relative">
+          <button
+            onClick={() => onDelete(goal.id)}
+            aria-label="목표 삭제"
+            className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+          >
+            ✕
+          </button>
+
+          <div className="mb-3">
+            <h3 className="text-lg font-bold text-slate-800 pr-8">{goal.name}</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              목표일 {goal.targetDate}
+              {hasStart && ` · 시작일 ${goal.startDate}`}
+            </p>
+          </div>
+
+          <div className={`text-5xl font-extrabold tracking-tight mb-4 ${labelColor}`}>
+            {label}
+          </div>
+
+          {hasStart ? (
+            <ProgressGauge percent={percent} />
+          ) : (
+            <p className="text-xs text-slate-400 italic">
+              시작 날짜를 입력하면 진행률이 표시됩니다 (현재 0%)
+            </p>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🧩 목표 입력 폼
+    // ========================================
+
+    function GoalForm({ onAdd }) {
+      const [name, setName] = useState('');
+      const [startDate, setStartDate] = useState('');
+      const [targetDate, setTargetDate] = useState('');
+      const [error, setError] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        setError('');
+
+        if (!name.trim()) {
+          setError('목표 이름을 입력해 주세요.');
+          return;
+        }
+        if (!targetDate) {
+          setError('목표 날짜를 선택해 주세요.');
+          return;
+        }
+        if (startDate) {
+          const s = parseDate(startDate);
+          const t = parseDate(targetDate);
+          if (t < s) {
+            setError('목표일이 시작일보다 빠를 수 없습니다.');
+            return;
+          }
+          if (t.getTime() === s.getTime()) {
+            setError('목표일과 시작일이 같습니다. 진행률 계산을 위해 다른 날짜를 선택해 주세요.');
+            return;
+          }
+        }
+
+        onAdd({
+          id: Date.now().toString(),
+          name: name.trim(),
+          startDate,
+          targetDate,
+        });
+
+        // 폼 초기화
+        setName('');
+        setStartDate('');
+        setTargetDate('');
+      };
+
+      return (
+        <Card>
+          <h2 className="text-base font-bold text-slate-700 mb-4">새 목표 추가</h2>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <Input
+              label="목표 이름"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="예: 정보처리기사 시험"
+              error={!!error && !name.trim()}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                type="date"
+                label="시작 날짜 (선택)"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+              <Input
+                type="date"
+                label="목표 날짜"
+                value={targetDate}
+                onChange={(e) => setTargetDate(e.target.value)}
+              />
+            </div>
+
+            {error && (
+              <div role="alert" className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                ⚠️ {error}
+              </div>
+            )}
+
+            <Button type="submit" size="lg" className="mt-1">목표 추가하기</Button>
+          </form>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+
+    const STORAGE_KEY = 'dday-goals-v1';
+
+    function App() {
+      const today = useMemo(() => getToday(), []);
+
+      const [goals, setGoals] = useState(() => {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          return saved ? JSON.parse(saved) : [];
+        } catch {
+          return [];
+        }
+      });
+
+      // localStorage 동기화
+      useEffect(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(goals));
+        } catch {
+          /* 저장 실패 무시 */
+        }
+      }, [goals]);
+
+      const addGoal = useCallback((goal) => {
+        setGoals((prev) => [goal, ...prev]);
+      }, []);
+
+      const deleteGoal = useCallback((id) => {
+        setGoals((prev) => prev.filter((g) => g.id !== id));
+      }, []);
+
+      // 목표일 가까운 순으로 정렬
+      const sortedGoals = useMemo(() => {
+        return [...goals].sort((a, b) => {
+          const ra = diffDays(today, parseDate(a.targetDate));
+          const rb = diffDays(today, parseDate(b.targetDate));
+          return ra - rb;
+        });
+      }, [goals, today]);
+
+      return (
+        <div className="max-w-2xl mx-auto px-4 py-8">
+          <header className="text-center mb-6">
+            <h1 className="text-3xl font-extrabold text-slate-800">⏳ D-Day 카운터</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              목표까지 남은 날과 진행률을 한눈에 확인하세요
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              오늘: {today.getFullYear()}년 {today.getMonth() + 1}월 {today.getDate()}일
+            </p>
+          </header>
+
+          <div className="mb-6">
+            <GoalForm onAdd={addGoal} />
+          </div>
+
+          <section>
+            <div className="flex items-center justify-between mb-3 px-1">
+              <h2 className="text-sm font-bold text-slate-600">내 목표 ({goals.length})</h2>
+            </div>
+
+            {sortedGoals.length === 0 ? (
+              <Card className="text-center py-10">
+                <p className="text-4xl mb-2">🎯</p>
+                <p className="text-slate-500 text-sm">아직 등록된 목표가 없습니다.</p>
+                <p className="text-slate-400 text-xs mt-1">위 폼에서 첫 목표를 추가해 보세요!</p>
+              </Card>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {sortedGoals.map((goal) => (
+                  <GoalCard
+                    key={goal.id}
+                    goal={goal}
+                    today={today}
+                    onDelete={deleteGoal}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <footer className="text-center text-xs text-slate-400 mt-8">
+            데이터는 브라우저(localStorage)에 저장됩니다
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>비만도 측정기 (BMI 계산기)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gradient-to-br from-slate-100 to-slate-200 min-h-screen">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState } = React;
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // Card: 그림자, 둥근 모서리, 패딩을 가진 래퍼
+    function Card({ children, className = "" }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-lg p-6 sm:p-8 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // Input: 라벨, 단위, 에러 표시를 지원하는 입력 컴포넌트
+    function Input({ label, unit, value, onChange, placeholder, error, ...props }) {
+      return (
+        <div className="w-full">
+          {label && (
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              {label}
+            </label>
+          )}
+          <div className="relative">
+            <input
+              type="number"
+              inputMode="decimal"
+              value={value}
+              onChange={onChange}
+              placeholder={placeholder}
+              className={`w-full px-4 py-3 pr-12 rounded-xl border text-slate-800 text-lg
+                focus:outline-none focus:ring-2 transition
+                ${error
+                  ? "border-red-400 focus:ring-red-300"
+                  : "border-slate-300 focus:ring-blue-400 focus:border-blue-400"}`}
+              aria-invalid={!!error}
+              {...props}
+            />
+            {unit && (
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium pointer-events-none">
+                {unit}
+              </span>
+            )}
+          </div>
+          {error && (
+            <p className="mt-1.5 text-sm text-red-500" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // Button: variant / size 지원
+    function Button({ children, variant = "primary", size = "md", className = "", ...props }) {
+      const variants = {
+        primary: "bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200",
+        secondary: "bg-slate-100 hover:bg-slate-200 text-slate-700",
+        ghost: "bg-transparent hover:bg-slate-100 text-slate-600",
+      };
+      const sizes = {
+        sm: "px-3 py-1.5 text-sm",
+        md: "px-5 py-2.5 text-base",
+        lg: "px-6 py-3.5 text-lg",
+      };
+      return (
+        <button
+          className={`rounded-xl font-semibold transition active:scale-[0.98]
+            disabled:opacity-50 disabled:cursor-not-allowed
+            ${variants[variant]} ${sizes[size]} ${className}`}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // Badge: 비만도 분류 색상 표시
+    function Badge({ children, color = "slate", className = "" }) {
+      const colors = {
+        slate: "bg-slate-100 text-slate-700",
+        sky: "bg-sky-100 text-sky-700",
+        green: "bg-green-100 text-green-700",
+        yellow: "bg-yellow-100 text-yellow-700",
+        orange: "bg-orange-100 text-orange-700",
+        red: "bg-red-100 text-red-700",
+        rose: "bg-rose-100 text-rose-700",
+      };
+      return (
+        <span className={`inline-flex items-center px-4 py-1.5 rounded-full text-base font-bold
+          ${colors[color]} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    // ========================================
+    // 🧩 비즈니스 로직 (BMI 분류)
+    // ========================================
+
+    // 대한비만학회 기준 분류 반환
+    function classifyBMI(bmi) {
+      if (bmi < 18.5)  return { label: "저체중",          color: "sky",    desc: "표준 체중보다 가벼운 상태예요." };
+      if (bmi < 23)    return { label: "정상",            color: "green",  desc: "건강한 표준 체중 범위예요." };
+      if (bmi < 25)    return { label: "과체중",          color: "yellow", desc: "표준보다 약간 높은 상태예요." };
+      if (bmi < 30)    return { label: "비만 (1단계)",    color: "orange", desc: "체중 관리가 필요한 단계예요." };
+      if (bmi < 35)    return { label: "고도비만 (2단계)", color: "red",    desc: "적극적인 관리가 필요해요." };
+      return                  { label: "초고도비만 (3단계)", color: "rose",   desc: "전문가 상담을 권장해요." };
+    }
+
+    // 분류 기준표 데이터 (UI 표시용)
+    const BMI_TABLE = [
+      { range: "18.5 미만",      label: "저체중",          color: "sky" },
+      { range: "18.5 ~ 23 미만", label: "정상",            color: "green" },
+      { range: "23 ~ 25 미만",   label: "과체중",          color: "yellow" },
+      { range: "25 ~ 30 미만",   label: "비만 (1단계)",    color: "orange" },
+      { range: "30 ~ 35 미만",   label: "고도비만 (2단계)", color: "red" },
+      { range: "35 이상",        label: "초고도비만 (3단계)", color: "rose" },
+    ];
+
+    // ========================================
+    // 📄 BMI 계산기 페이지
+    // ========================================
+    function BMICalculator() {
+      const [height, setHeight] = useState("");
+      const [weight, setWeight] = useState("");
+      const [errors, setErrors] = useState({});
+      const [result, setResult] = useState(null);
+
+      // 입력값 검증
+      function validate() {
+        const next = {};
+        const h = parseFloat(height);
+        const w = parseFloat(weight);
+
+        if (height.trim() === "") next.height = "키를 입력해 주세요.";
+        else if (isNaN(h) || h <= 0) next.height = "키는 0보다 큰 숫자여야 해요.";
+
+        if (weight.trim() === "") next.weight = "몸무게를 입력해 주세요.";
+        else if (isNaN(w) || w <= 0) next.weight = "몸무게는 0보다 큰 숫자여야 해요.";
+
+        return next;
+      }
+
+      function handleCalculate() {
+        const next = validate();
+        setErrors(next);
+        if (Object.keys(next).length > 0) {
+          setResult(null);
+          return;
+        }
+        const hMeter = parseFloat(height) / 100; // cm → m
+        const w = parseFloat(weight);
+        const bmi = w / (hMeter * hMeter);
+        setResult({ value: bmi, ...classifyBMI(bmi) });
+      }
+
+      function handleReset() {
+        setHeight("");
+        setWeight("");
+        setErrors({});
+        setResult(null);
+      }
+
+      function handleKeyDown(e) {
+        if (e.key === "Enter") handleCalculate();
+      }
+
+      return (
+        <div className="max-w-md w-full mx-auto px-4 py-10">
+          {/* 헤더 */}
+          <header className="text-center mb-6">
+            <h1 className="text-3xl font-extrabold text-slate-800">비만도 측정기</h1>
+            <p className="text-slate-500 mt-1">키와 몸무게로 BMI를 계산해 보세요</p>
+          </header>
+
+          {/* 입력 카드 */}
+          <Card>
+            <div className="space-y-4" onKeyDown={handleKeyDown}>
+              <Input
+                label="키"
+                unit="cm"
+                value={height}
+                onChange={(e) => setHeight(e.target.value)}
+                placeholder="예: 170"
+                error={errors.height}
+                min="0"
+                step="0.1"
+              />
+              <Input
+                label="몸무게"
+                unit="kg"
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                placeholder="예: 65"
+                error={errors.weight}
+                min="0"
+                step="0.1"
+              />
+              <div className="flex gap-3 pt-2">
+                <Button onClick={handleCalculate} size="lg" className="flex-1">
+                  계산하기
+                </Button>
+                <Button onClick={handleReset} variant="secondary" size="lg">
+                  초기화
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* 결과 카드 */}
+          {result && (
+            <Card className="mt-5 text-center">
+              <p className="text-sm font-semibold text-slate-500 mb-2">나의 BMI 지수</p>
+              <p className="text-5xl font-extrabold text-slate-800 mb-3">
+                {result.value.toFixed(1)}
+              </p>
+              <Badge color={result.color}>{result.label}</Badge>
+              <p className="text-slate-500 mt-3">{result.desc}</p>
+            </Card>
+          )}
+
+          {/* 분류 기준표 */}
+          <Card className="mt-5">
+            <h2 className="text-lg font-bold text-slate-800 mb-3">비만도 분류 기준</h2>
+            <p className="text-xs text-slate-400 mb-4">대한비만학회 기준</p>
+            <ul className="space-y-2">
+              {BMI_TABLE.map((row) => {
+                const active = result && result.label === row.label;
+                return (
+                  <li
+                    key={row.label}
+                    className={`flex items-center justify-between px-3 py-2 rounded-lg transition
+                      ${active ? "ring-2 ring-blue-400 bg-blue-50" : "bg-slate-50"}`}
+                  >
+                    <Badge color={row.color} className="text-sm px-3 py-1">
+                      {row.label}
+                    </Badge>
+                    <span className="text-sm text-slate-600 font-medium">
+                      BMI {row.range}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+
+          <footer className="text-center text-xs text-slate-400 mt-6">
+            본 결과는 참고용이며, 정확한 진단은 전문가와 상담하세요.
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      return (
+        <div className="min-h-screen flex items-start justify-center">
+          <BMICalculator />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

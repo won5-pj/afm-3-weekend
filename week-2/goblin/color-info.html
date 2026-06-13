@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>컬러 팔레트 인포 · Color Palette Info</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in-up { animation: fadeInUp 0.35s ease-out both; }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translate(-50%, 10px); }
+      to   { opacity: 1; transform: translate(-50%, 0); }
+    }
+    .animate-toast-in { animation: toastIn 0.25s ease-out both; }
+
+    /* Smooth color transitions when shuffling */
+    .swatch-surface { transition: background-color 0.4s ease; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useCallback, useEffect, useRef } = React;
+
+    // ========================================
+    // 🎨 Color Math Utilities
+    // ========================================
+
+    // Convert HSL (h: 0-360, s/l: 0-100) -> { r, g, b } (0-255)
+    function hslToRgb(h, s, l) {
+      s /= 100;
+      l /= 100;
+      const k = (n) => (n + h / 30) % 12;
+      const a = s * Math.min(l, 1 - l);
+      const f = (n) =>
+        l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+      return {
+        r: Math.round(255 * f(0)),
+        g: Math.round(255 * f(8)),
+        b: Math.round(255 * f(4)),
+      };
+    }
+
+    function rgbToHex({ r, g, b }) {
+      const toHex = (v) => v.toString(16).padStart(2, "0").toUpperCase();
+      return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
+    // Convert RGB (0-255) -> { h: 0-360, s/l: 0-100 }
+    function rgbToHsl({ r, g, b }) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const d = max - min;
+      let h = 0;
+      if (d !== 0) {
+        if (max === r) h = ((g - b) / d) % 6;
+        else if (max === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      const l = (max + min) / 2;
+      const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+      return {
+        h: Math.round(h),
+        s: Math.round(s * 100),
+        l: Math.round(l * 100),
+      };
+    }
+
+    // Parse ANY CSS color string (hex, rgb(), hsl(), named e.g. "tomato")
+    // -> { r, g, b } or null if invalid. Uses the browser's own parser.
+    function parseColorInput(input) {
+      const str = (input || "").trim();
+      if (!str) return null;
+      const probe = document.createElement("div");
+      probe.style.color = "";
+      probe.style.color = str; // browser rejects invalid -> stays ""
+      if (probe.style.color === "") return null;
+      probe.style.display = "none";
+      document.body.appendChild(probe);
+      const computed = getComputedStyle(probe).color; // -> "rgb(r, g, b)" / "rgba(...)"
+      document.body.removeChild(probe);
+      const m = computed.match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const parts = m[1].split(",").map((v) => parseFloat(v.trim()));
+      const [r, g, b] = parts;
+      if ([r, g, b].some((v) => Number.isNaN(v))) return null;
+      return { r: Math.round(r), g: Math.round(g), b: Math.round(b) };
+    }
+
+    // Relative luminance (WCAG) to decide black/white text
+    function relativeLuminance({ r, g, b }) {
+      const srgb = [r, g, b].map((v) => {
+        const c = v / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+      });
+      return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+    }
+
+    function readableTextColor(rgb) {
+      // Threshold ~0.4 gives good contrast for both light & dark swatches
+      return relativeLuminance(rgb) > 0.45 ? "#0f172a" : "#ffffff";
+    }
+
+    // ========================================
+    // 🏷️ Color Naming (approximate, hue-based)
+    // ========================================
+
+    const HUE_NAMES = [
+      [0, "레드"],
+      [15, "코랄"],
+      [30, "오렌지"],
+      [45, "앰버"],
+      [60, "옐로우"],
+      [80, "라임"],
+      [100, "그린"],
+      [140, "에메랄드"],
+      [170, "틸"],
+      [190, "시안"],
+      [210, "스카이"],
+      [230, "블루"],
+      [255, "인디고"],
+      [275, "바이올렛"],
+      [295, "퍼플"],
+      [320, "마젠타"],
+      [340, "핑크"],
+      [360, "레드"],
+    ];
+
+    function hueName(h) {
+      let best = HUE_NAMES[0][1];
+      let bestDiff = Infinity;
+      for (const [deg, name] of HUE_NAMES) {
+        const diff = Math.abs(deg - h);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = name;
+        }
+      }
+      return best;
+    }
+
+    function toneLabel(s, l, variant) {
+      if (s < 12) return l > 50 ? "라이트 그레이" : "다크 그레이";
+      if (variant === "light") return l > 82 ? "페일" : "소프트";
+      return l < 22 ? "딥" : "다크";
+    }
+
+    function buildColor(variant) {
+      const h = Math.floor(Math.random() * 360);
+      let s, l;
+      if (variant === "light") {
+        s = 35 + Math.floor(Math.random() * 50); // 35-85
+        l = 78 + Math.floor(Math.random() * 16); // 78-94
+      } else {
+        s = 35 + Math.floor(Math.random() * 55); // 35-90
+        l = 10 + Math.floor(Math.random() * 16); // 10-26
+      }
+      const rgb = hslToRgb(h, s, l);
+      const hex = rgbToHex(rgb);
+      const name = `${toneLabel(s, l, variant)} ${hueName(h)}`.trim();
+      return {
+        id: `${variant}-${h}-${s}-${l}-${Math.random().toString(36).slice(2, 7)}`,
+        variant,
+        h,
+        s,
+        l,
+        rgb,
+        hex,
+        name,
+        text: readableTextColor(rgb),
+      };
+    }
+
+    // Build a full color-info object from an arbitrary RGB value (user input)
+    function buildColorFromRgb(rgb) {
+      const { h, s, l } = rgbToHsl(rgb);
+      const variant = l >= 50 ? "light" : "dark";
+      const hex = rgbToHex(rgb);
+      const name = `${toneLabel(s, l, variant)} ${hueName(h)}`.trim();
+      return {
+        id: `input-${hex}`,
+        variant,
+        h,
+        s,
+        l,
+        rgb,
+        hex,
+        name,
+        text: readableTextColor(rgb),
+      };
+    }
+
+    // Build a color-info object from explicit HSL values
+    function buildColorFromHsl(h, s, l) {
+      const rgb = hslToRgb(h, s, l);
+      const variant = l >= 50 ? "light" : "dark";
+      const hex = rgbToHex(rgb);
+      const name = `${toneLabel(s, l, variant)} ${hueName(h)}`.trim();
+      return {
+        id: `hsl-${h}-${s}-${l}`,
+        variant,
+        h,
+        s,
+        l,
+        rgb,
+        hex,
+        name,
+        text: readableTextColor(rgb),
+      };
+    }
+
+    // From a base color, derive 5 lighter + 5 darker shades of the SAME hue.
+    function buildRelatedPalette(base) {
+      const h = base.h;
+      const s = Math.max(18, Math.min(base.s, 92)); // keep a pleasant saturation
+      const n = 5;
+      // 5 lightness steps strictly above base, ending near 96 (lightest)
+      const lightTop = 96;
+      const lightFloor = Math.max(base.l, 40);
+      const light = Array.from({ length: n }, (_, i) => {
+        const l = Math.round(lightFloor + ((lightTop - lightFloor) * (i + 1)) / n);
+        return buildColorFromHsl(h, s, Math.min(l, 97));
+      });
+      // 5 lightness steps strictly below base, ending near 8 (darkest)
+      const darkBottom = 8;
+      const darkCeil = Math.min(base.l, 60);
+      const dark = Array.from({ length: n }, (_, i) => {
+        const l = Math.round(darkCeil - ((darkCeil - darkBottom) * (i + 1)) / n);
+        return buildColorFromHsl(h, s, Math.max(l, 6));
+      });
+      return { light, dark };
+    }
+
+    function buildPalette() {
+      const light = Array.from({ length: 5 }, () => buildColor("light"));
+      const dark = Array.from({ length: 5 }, () => buildColor("dark"));
+      return { light, dark };
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    function Button({
+      children,
+      onClick,
+      variant = "primary",
+      size = "md",
+      className = "",
+      type = "button",
+      ...rest
+    }) {
+      const variants = {
+        primary:
+          "bg-slate-900 text-white hover:bg-slate-700 focus-visible:ring-slate-900",
+        secondary:
+          "bg-white text-slate-900 border border-slate-300 hover:bg-slate-50 focus-visible:ring-slate-400",
+        ghost:
+          "bg-transparent text-slate-600 hover:bg-slate-200 focus-visible:ring-slate-400",
+      };
+      const sizes = {
+        sm: "px-3 py-1.5 text-sm",
+        md: "px-4 py-2 text-sm",
+        lg: "px-6 py-3 text-base",
+      };
+      return (
+        <button
+          type={type}
+          onClick={onClick}
+          className={`inline-flex items-center justify-center gap-2 rounded-xl font-semibold shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${variants[variant]} ${sizes[size]} ${className}`}
+          {...rest}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Badge({ children, className = "" }) {
+      return (
+        <span
+          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${className}`}
+        >
+          {children}
+        </span>
+      );
+    }
+
+    function Toast({ message }) {
+      if (!message) return null;
+      return (
+        <div className="pointer-events-none fixed bottom-8 left-1/2 z-50 animate-toast-in -translate-x-1/2">
+          <div className="flex items-center gap-2 rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-xl">
+            <CheckIcon className="h-4 w-4" />
+            {message}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🔣 Icons (inline SVG)
+    // ========================================
+
+    function CopyIcon({ className = "h-4 w-4" }) {
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      );
+    }
+
+    function CheckIcon({ className = "h-4 w-4" }) {
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      );
+    }
+
+    function ShuffleIcon({ className = "h-4 w-4" }) {
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 3h5v5" />
+          <path d="M4 20 21 3" />
+          <path d="M21 16v5h-5" />
+          <path d="M15 15l6 6" />
+          <path d="M4 4l5 5" />
+        </svg>
+      );
+    }
+
+    // ========================================
+    // 🧩 Swatch Card
+    // ========================================
+
+    function InfoRow({ label, value, text }) {
+      return (
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="font-medium opacity-70" style={{ color: text }}>
+            {label}
+          </span>
+          <span
+            className="font-mono tracking-tight tabular-nums"
+            style={{ color: text }}
+          >
+            {value}
+          </span>
+        </div>
+      );
+    }
+
+    function SwatchCard({ color, onCopy, index }) {
+      const { hex, rgb, h, s, l, name, text } = color;
+      const rgbStr = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+      const hslStr = `${h}°, ${s}%, ${l}%`;
+
+      return (
+        <div
+          className="swatch-surface group relative flex cursor-pointer flex-col gap-4 rounded-2xl p-5 shadow-md ring-1 ring-black/5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-xl animate-fade-in-up"
+          style={{ backgroundColor: hex, animationDelay: `${index * 40}ms` }}
+          onClick={() => onCopy(hex)}
+          role="button"
+          tabIndex={0}
+          aria-label={`${name} ${hex} 복사`}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onCopy(hex);
+            }
+          }}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-base font-bold" style={{ color: text }}>
+                {name}
+              </p>
+              <p
+                className="mt-0.5 font-mono text-2xl font-extrabold tracking-tight"
+                style={{ color: text }}
+              >
+                {hex}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopy(hex);
+              }}
+              className="shrink-0 rounded-lg p-2 opacity-70 ring-1 ring-inset transition hover:opacity-100 focus:outline-none focus-visible:ring-2"
+              style={{ color: text, borderColor: text, "--tw-ring-color": text }}
+              aria-label="HEX 복사"
+              title="HEX 복사"
+            >
+              <CopyIcon className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div
+            className="space-y-1.5 border-t pt-3"
+            style={{ borderColor: text === "#ffffff" ? "rgba(255,255,255,0.25)" : "rgba(15,23,42,0.15)" }}
+          >
+            <InfoRow label="RGB" value={rgbStr} text={text} />
+            <InfoRow label="HSL" value={hslStr} text={text} />
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Color Input Panel
+    // ========================================
+
+    function ColorInput({ onCopy, onColorChange, initialText }) {
+      const [text, setText] = useState(initialText || "");
+      const [color, setColor] = useState(null);
+      const [error, setError] = useState("");
+
+      const evaluate = useCallback((raw) => {
+        const rgb = parseColorInput(raw);
+        if (!rgb) {
+          setColor(null);
+          setError(raw.trim() ? "인식할 수 없는 색상이에요. 예: #3B82F6, rgb(59,130,246), hsl(217,91%,60%), tomato" : "");
+          return;
+        }
+        setError("");
+        const c = buildColorFromRgb(rgb);
+        setColor(c);
+        if (onColorChange) onColorChange(c);
+      }, [onColorChange]);
+
+      // Evaluate the initial value once on mount so the page isn't empty
+      useEffect(() => {
+        if (initialText) evaluate(initialText);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      // Allow the parent (e.g. random button) to push a new value in
+      useEffect(() => {
+        if (initialText != null && initialText !== text) {
+          setText(initialText);
+          evaluate(initialText);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [initialText]);
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        evaluate(text);
+      };
+
+      // The native color picker always yields a valid hex
+      const handlePicker = (e) => {
+        const v = e.target.value;
+        setText(v);
+        evaluate(v);
+      };
+
+      return (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="h-3 w-3 rounded-full bg-emerald-400" />
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">색상 입력</h2>
+              <p className="text-sm text-slate-500">
+                HEX · RGB · HSL · 색상 이름을 입력하면 같은 계열의 밝은색·어두운색을 만들어 드립니다.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  evaluate(e.target.value);
+                }}
+                placeholder="예: #3B82F6, rgb(59,130,246), hsl(217,91%,60%), tomato"
+                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 pr-12 font-mono text-sm text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              <label
+                className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 cursor-pointer overflow-hidden rounded-lg border border-slate-300 shadow-sm"
+                title="컬러 피커로 선택"
+                style={{ backgroundColor: color ? color.hex : "#ffffff" }}
+              >
+                <input
+                  type="color"
+                  value={color ? color.hex : "#ffffff"}
+                  onChange={handlePicker}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  aria-label="컬러 피커"
+                />
+              </label>
+            </div>
+            <Button type="submit" size="lg" className="shrink-0">
+              정보 보기
+            </Button>
+          </form>
+
+          {error && (
+            <p className="mt-3 text-sm font-medium text-rose-600">{error}</p>
+          )}
+
+          {color && (
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,260px)_1fr]">
+              <SwatchCard color={color} onCopy={onCopy} index={0} />
+              <div className="flex flex-col justify-center gap-3 rounded-2xl bg-slate-50 p-5">
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-slate-900 text-white">
+                    {color.variant === "light" ? "밝은색" : "어두운색"}
+                  </Badge>
+                  <Badge className="bg-slate-200 text-slate-600">{color.name}</Badge>
+                </div>
+                <DetailRow label="HEX" value={color.hex} onCopy={onCopy} />
+                <DetailRow
+                  label="RGB"
+                  value={`rgb(${color.rgb.r}, ${color.rgb.g}, ${color.rgb.b})`}
+                  onCopy={onCopy}
+                />
+                <DetailRow
+                  label="HSL"
+                  value={`hsl(${color.h}, ${color.s}%, ${color.l}%)`}
+                  onCopy={onCopy}
+                />
+              </div>
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    function DetailRow({ label, value, onCopy }) {
+      return (
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {label}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-semibold text-slate-800">{value}</span>
+            <button
+              type="button"
+              onClick={() => onCopy(value)}
+              className="rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              title="복사"
+              aria-label={`${label} 복사`}
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Color Group Section
+    // ========================================
+
+    function ColorGroup({ title, subtitle, accent, colors, onCopy }) {
+      return (
+        <section className="space-y-4">
+          <div className="flex items-center gap-3">
+            <span className={`h-3 w-3 rounded-full ${accent}`} />
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+              <p className="text-sm text-slate-500">{subtitle}</p>
+            </div>
+            <Badge className="ml-auto bg-slate-200 text-slate-600">
+              {colors.length}개
+            </Badge>
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            {colors.map((c, i) => (
+              <SwatchCard key={c.id} color={c} onCopy={onCopy} index={i} />
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+
+    function App() {
+      const [baseColor, setBaseColor] = useState(null);
+      const [inputText, setInputText] = useState("#3B82F6");
+      const [toast, setToast] = useState("");
+      const toastTimer = useRef(null);
+
+      // 5 lighter + 5 darker shades of the SAME hue as the input color
+      const palette = baseColor
+        ? buildRelatedPalette(baseColor)
+        : { light: [], dark: [] };
+
+      const showToast = useCallback((msg) => {
+        setToast(msg);
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast(""), 1400);
+      }, []);
+
+      const handleCopy = useCallback(
+        (hex) => {
+          const done = () => showToast(`${hex} 복사됨!`);
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(hex).then(done).catch(() => {
+              fallbackCopy(hex);
+              done();
+            });
+          } else {
+            fallbackCopy(hex);
+            done();
+          }
+        },
+        [showToast]
+      );
+
+      const fallbackCopy = (text) => {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+      };
+
+      // Random base color → its related light/dark family
+      const handleShuffle = useCallback(() => {
+        const h = Math.floor(Math.random() * 360);
+        const s = 45 + Math.floor(Math.random() * 45); // 45-90
+        const l = 45 + Math.floor(Math.random() * 20); // 45-65 (mid)
+        setInputText(rgbToHex(hslToRgb(h, s, l)));
+      }, []);
+
+      useEffect(() => {
+        return () => {
+          if (toastTimer.current) clearTimeout(toastTimer.current);
+        };
+      }, []);
+
+      return (
+        <div className="min-h-screen">
+          <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+            {/* Header */}
+            <header className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+              <div className="max-w-2xl">
+                <Badge className="mb-3 bg-slate-900 text-white">
+                  COLOR PALETTE
+                </Badge>
+                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
+                  컬러 팔레트 인포
+                </h1>
+                <p className="mt-3 text-slate-500">
+                  원하는 색상을 입력하면 <b>같은 계열</b>의 밝은색 5개와
+                  어두운색 5개를 자동으로 만들어 드립니다. 각 스와치에는
+                  HEX · RGB · HSL 정보가 표시되며, 클릭하면 HEX 코드가
+                  클립보드에 복사됩니다.
+                </p>
+              </div>
+              <Button onClick={handleShuffle} size="lg" className="shrink-0">
+                <ShuffleIcon className="h-5 w-5" />
+                랜덤 색상
+              </Button>
+            </header>
+
+            {/* Color Input */}
+            <div className="mb-12">
+              <ColorInput
+                onCopy={handleCopy}
+                onColorChange={setBaseColor}
+                initialText={inputText}
+              />
+            </div>
+
+            {/* Same-family Color Groups */}
+            {baseColor ? (
+              <div className="space-y-12">
+                <ColorGroup
+                  title="동일 계열 · 밝은색 5"
+                  subtitle={`입력한 ${baseColor.hex} 보다 밝은 같은 색상`}
+                  accent="bg-amber-300"
+                  colors={palette.light}
+                  onCopy={handleCopy}
+                />
+                <ColorGroup
+                  title="동일 계열 · 어두운색 5"
+                  subtitle={`입력한 ${baseColor.hex} 보다 어두운 같은 색상`}
+                  accent="bg-indigo-900"
+                  colors={palette.dark}
+                  onCopy={handleCopy}
+                />
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-400">
+                위에 색상을 입력하면 같은 계열의 밝은색·어두운색 팔레트가 여기에 표시됩니다.
+              </p>
+            )}
+
+            {/* Footer hint */}
+            <p className="mt-12 text-center text-xs text-slate-400">
+              스와치 또는 복사 아이콘을 클릭 / Enter 키로 HEX 코드를 복사할 수 있습니다.
+            </p>
+          </div>
+
+          <Toast message={toast} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

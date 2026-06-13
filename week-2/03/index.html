@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>React 기초 예제 - 카운터 & 할 일 목록</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState } = React;
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', onClick, disabled, className = '', children, ...props }) {
+      const base = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500',
+        secondary: 'bg-slate-200 text-slate-800 hover:bg-slate-300 focus:ring-slate-400',
+        danger: 'bg-rose-500 text-white hover:bg-rose-600 focus:ring-rose-400',
+        ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 focus:ring-slate-300',
+      };
+      const sizes = { sm: 'px-2.5 py-1 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-base' };
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 p-6 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 Page Components
+    // ========================================
+
+    // 카운터 — useState + 이벤트 핸들링 예제
+    function Counter() {
+      const [count, setCount] = useState(0);
+
+      return (
+        <Card>
+          <h2 className="text-lg font-bold text-slate-800 mb-1">🔢 카운터</h2>
+          <p className="text-sm text-slate-500 mb-5">useState 와 이벤트 핸들링 예제</p>
+
+          <div className="flex flex-col items-center gap-4">
+            <span
+              className={`text-6xl font-extrabold tabular-nums ${count > 0 ? 'text-indigo-600' : count < 0 ? 'text-rose-500' : 'text-slate-400'}`}
+              aria-live="polite"
+            >
+              {count}
+            </span>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="danger" onClick={() => setCount(count - 1)} aria-label="1 감소">− 1</Button>
+              <Button variant="secondary" onClick={() => setCount(0)}>초기화</Button>
+              <Button variant="primary" onClick={() => setCount(count + 1)} aria-label="1 증가">+ 1</Button>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    // 할 일 목록 — 리스트 렌더링 + 조건부 렌더링 예제
+    function TodoList() {
+      const [todos, setTodos] = useState([
+        { id: 1, text: 'React 기초 배우기', done: true },
+        { id: 2, text: 'useState 이해하기', done: false },
+      ]);
+      const [input, setInput] = useState('');
+
+      const addTodo = () => {
+        const text = input.trim();
+        if (!text) return;
+        setTodos([...todos, { id: Date.now(), text, done: false }]);
+        setInput('');
+      };
+
+      const toggleTodo = (id) => {
+        setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
+      };
+
+      const removeTodo = (id) => {
+        setTodos(todos.filter(t => t.id !== id));
+      };
+
+      const remaining = todos.filter(t => !t.done).length;
+
+      return (
+        <Card>
+          <h2 className="text-lg font-bold text-slate-800 mb-1">📝 할 일 목록</h2>
+          <p className="text-sm text-slate-500 mb-5">리스트 렌더링 과 조건부 렌더링 예제</p>
+
+          {/* 입력 영역 */}
+          <div className="flex gap-2 mb-4">
+            <label htmlFor="todo-input" className="sr-only">할 일 입력</label>
+            <input
+              id="todo-input"
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addTodo()}
+              placeholder="할 일을 입력하세요"
+              className="flex-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <Button onClick={addTodo} disabled={!input.trim()}>추가</Button>
+          </div>
+
+          {/* 리스트 (조건부 렌더링: 비어있으면 안내 문구) */}
+          {todos.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-6">할 일이 없습니다. 새로 추가해 보세요! ✨</p>
+          ) : (
+            <ul className="space-y-2">
+              {todos.map(todo => (
+                <li key={todo.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 hover:bg-slate-100">
+                  <input
+                    type="checkbox"
+                    checked={todo.done}
+                    onChange={() => toggleTodo(todo.id)}
+                    className="w-4 h-4 accent-indigo-600 cursor-pointer"
+                    aria-label={`${todo.text} 완료 표시`}
+                  />
+                  <span className={`flex-1 text-sm ${todo.done ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                    {todo.text}
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={() => removeTodo(todo.id)} aria-label="삭제">🗑️</Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {todos.length > 0 && (
+            <p className="mt-4 text-right text-xs text-slate-500">
+              남은 할 일: <span className="font-semibold text-indigo-600">{remaining}</span> / {todos.length}
+            </p>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+    function App() {
+      return (
+        <div className="min-h-screen flex flex-col items-center px-4 py-10">
+          <header className="text-center mb-8">
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800">⚛️ React 기초 예제</h1>
+            <p className="mt-2 text-sm text-slate-500">Week 2 · 03 — useState, 이벤트, 리스트/조건부 렌더링</p>
+          </header>
+
+          <main className="w-full max-w-md grid grid-cols-1 gap-6">
+            <Counter />
+            <TodoList />
+          </main>
+
+          <footer className="mt-10 text-xs text-slate-400">
+            CDN 기반 React 18 · 빌드 도구 없이 단일 HTML 파일로 동작
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
