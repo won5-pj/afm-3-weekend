@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>문서 PDF 변환기</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정. Babel 은 7.x (8.x 미지원) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <!-- jsPDF: 실제 PDF 생성/다운로드 (전역 window.jspdf.jsPDF) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- html2canvas: 한글 렌더링을 위해 DOM을 캔버스 이미지로 변환 (전역 html2canvas) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+    /* PDF 캡처용 영역: 화면 밖에 두어 사용자에게는 보이지 않게 하되 렌더링은 되게 함 */
+    .pdf-capture {
+      position: fixed;
+      left: -10000px;
+      top: 0;
+      width: 794px; /* A4 폭 기준(96dpi 환산) */
+      background: #ffffff;
+      color: #111827;
+    }
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    // ========================================
+    // 유틸리티 / 상수
+    // ========================================
+    const STORAGE_KEY = 'pdf_docs_v1';
+
+    // 샘플 문서 (저장된 문서가 하나도 없을 때 초기 시드로 사용)
+    const SAMPLE_DOCS = [
+      {
+        id: 'sample-1',
+        title: '환영합니다 — 사용 안내',
+        body: '이 앱은 작성한 글을 PDF로 변환해 줍니다.\n\n사용 방법\n1. 왼쪽 목록에서 문서를 불러오거나, 새 문서를 작성합니다.\n2. 제목과 본문을 자유롭게 수정합니다.\n3. "저장"을 누르면 목록에 저장되어 나중에 다시 불러올 수 있습니다.\n4. "PDF 내보내기"를 누르면 한글이 그대로 보이는 PDF가 다운로드됩니다.\n\n한글도 깨지지 않고 잘 나옵니다. 직접 확인해 보세요!',
+        updatedAt: Date.now() - 86400000,
+      },
+      {
+        id: 'sample-2',
+        title: '회의록 예시',
+        body: '일시: 2026-06-19 오후 2시\n참석자: 홍길동, 김영희, 이철수\n\n[안건 1] 다음 분기 일정\n- 7월 첫째 주 기획 확정\n- 디자인 시안 2종 준비\n\n[안건 2] 예산\n- 마케팅 비용 재검토 필요\n\n[결정 사항]\n- 다음 회의는 6월 26일로 결정',
+        updatedAt: Date.now() - 3600000,
+      },
+    ];
+
+    // localStorage 읽기 (실패해도 앱이 죽지 않도록 방어)
+    function loadDocs() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return SAMPLE_DOCS.slice();
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0) return SAMPLE_DOCS.slice();
+        return parsed;
+      } catch (e) {
+        return SAMPLE_DOCS.slice();
+      }
+    }
+
+    function saveDocs(docs) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(docs));
+      } catch (e) {
+        // 저장 공간 초과 등은 조용히 무시
+      }
+    }
+
+    // 고유 id 생성
+    const genId = () => 'doc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+
+    // 제목으로부터 안전한 파일명 만들기
+    function safeFileName(title) {
+      const base = (title || '문서').trim().replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
+      return (base || '문서') + '.pdf';
+    }
+
+    // 날짜 포맷
+    function formatDate(ts) {
+      try {
+        const d = new Date(ts);
+        return d.toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+      } catch (e) {
+        return '';
+      }
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', className = '', children, ...props }) {
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm',
+        secondary: 'bg-slate-200 hover:bg-slate-300 text-slate-800',
+        danger: 'bg-rose-500 hover:bg-rose-600 text-white',
+        ghost: 'bg-transparent hover:bg-slate-100 text-slate-600',
+      };
+      const sizes = {
+        sm: 'px-3 py-1.5 text-sm',
+        md: 'px-4 py-2 text-sm',
+        lg: 'px-5 py-2.5 text-base',
+      };
+      return (
+        <button
+          className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm border border-slate-200 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    function Input({ label, className = '', ...props }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>}
+          <input
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition"
+            {...props}
+          />
+        </div>
+      );
+    }
+
+    function Badge({ children, className = '' }) {
+      return (
+        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    // 토스트 알림 (간단한 자동 사라짐 알림)
+    function Toast({ message, type }) {
+      if (!message) return null;
+      const color = type === 'error' ? 'bg-rose-600' : 'bg-slate-900';
+      return (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 ${color} text-white px-4 py-2.5 rounded-xl shadow-lg text-sm animate-fadeIn`}>
+          {message}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 PDF 미리보기 캡처 컴포넌트
+    // 화면 밖에 실제 DOM으로 렌더링되어 html2canvas가 한글을 정확히 그릴 수 있게 한다.
+    // ========================================
+    function PdfTemplate({ innerRef, title, body }) {
+      return (
+        <div ref={innerRef} className="pdf-capture" aria-hidden="true">
+          <div style={{ padding: '56px 64px', boxSizing: 'border-box', minHeight: '1123px' }}>
+            <h1 style={{
+              fontSize: '28px', fontWeight: 700, lineHeight: 1.3,
+              marginBottom: '8px', wordBreak: 'break-word'
+            }}>
+              {title || '제목 없음'}
+            </h1>
+            <div style={{ height: '2px', background: '#4f46e5', width: '64px', margin: '12px 0 28px' }} />
+            <div style={{
+              fontSize: '15px', lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word'
+            }}>
+              {body || ''}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 사이드바: 저장된 문서 목록
+    // ========================================
+    function DocList({ docs, currentId, onSelect, onDelete }) {
+      if (docs.length === 0) {
+        return (
+          <div className="text-sm text-slate-400 text-center py-10">
+            저장된 문서가 없습니다.
+          </div>
+        );
+      }
+      return (
+        <ul className="space-y-1.5">
+          {docs.map((doc) => {
+            const active = doc.id === currentId;
+            return (
+              <li key={doc.id}>
+                <div
+                  onClick={() => onSelect(doc)}
+                  className={`group cursor-pointer rounded-xl px-3 py-2.5 border transition ${
+                    active
+                      ? 'bg-indigo-50 border-indigo-300'
+                      : 'bg-white border-transparent hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-800 truncate text-sm">
+                        {doc.title || '제목 없음'}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-0.5">{formatDate(doc.updatedAt)}</p>
+                    </div>
+                    <button
+                      title="삭제"
+                      onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
+                      className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 transition shrink-0"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      );
+    }
+
+    // ========================================
+    // 📄 메인 앱
+    // ========================================
+    function App() {
+      const [docs, setDocs] = useState(loadDocs);
+      const [currentId, setCurrentId] = useState(null); // 저장된 문서를 불러왔을 때의 id (없으면 새 문서)
+      const [title, setTitle] = useState('');
+      const [body, setBody] = useState('');
+      const [exporting, setExporting] = useState(false);
+      const [toast, setToast] = useState({ message: '', type: 'info' });
+
+      const captureRef = useRef(null);
+      const fileInputRef = useRef(null);
+      const toastTimer = useRef(null);
+
+      // 토스트 표시 헬퍼
+      const showToast = useCallback((message, type = 'info') => {
+        setToast({ message, type });
+        if (toastTimer.current) clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast({ message: '', type }), 2500);
+      }, []);
+
+      useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+      // 첫 진입 시 시드 문서를 localStorage에 동기화
+      useEffect(() => { saveDocs(docs); }, []); // eslint-disable-line
+
+      // 글자 수 (조건 분기로 빈 본문 처리)
+      const charCount = useMemo(() => (body ? body.length : 0), [body]);
+
+      // --- 동작: 새 문서 ---
+      const handleNew = () => {
+        setCurrentId(null);
+        setTitle('');
+        setBody('');
+        showToast('새 문서를 시작했습니다.');
+      };
+
+      // --- 동작: 목록에서 문서 불러오기 ---
+      const handleSelect = (doc) => {
+        setCurrentId(doc.id);
+        setTitle(doc.title || '');
+        setBody(doc.body || '');
+      };
+
+      // --- 동작: 문서 삭제 ---
+      const handleDelete = (id) => {
+        const next = docs.filter((d) => d.id !== id);
+        setDocs(next);
+        saveDocs(next);
+        if (id === currentId) handleNew();
+        showToast('문서를 삭제했습니다.');
+      };
+
+      // --- 동작: 저장 (현재 편집 내용을 목록에 저장) ---
+      const handleSave = () => {
+        if (!title.trim() && !body.trim()) {
+          showToast('제목이나 본문을 입력해 주세요.', 'error');
+          return;
+        }
+        const now = Date.now();
+        let nextDocs;
+        if (currentId) {
+          // 기존 문서 갱신
+          nextDocs = docs.map((d) =>
+            d.id === currentId ? { ...d, title, body, updatedAt: now } : d
+          );
+        } else {
+          // 새 문서 추가
+          const newDoc = { id: genId(), title, body, updatedAt: now };
+          setCurrentId(newDoc.id);
+          nextDocs = [newDoc, ...docs];
+        }
+        // 최신 수정순 정렬
+        nextDocs = nextDocs.slice().sort((a, b) => b.updatedAt - a.updatedAt);
+        setDocs(nextDocs);
+        saveDocs(nextDocs);
+        showToast('저장했습니다.');
+      };
+
+      // --- 동작: .txt 파일 불러오기 ---
+      const handleFilePick = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const text = String(ev.target.result || '');
+          setCurrentId(null); // 파일에서 온 새 문서
+          // 파일명을 제목으로(확장자 제거)
+          setTitle(file.name.replace(/\.txt$/i, ''));
+          setBody(text);
+          showToast('파일을 불러왔습니다.');
+        };
+        reader.onerror = () => showToast('파일을 읽지 못했습니다.', 'error');
+        reader.readAsText(file, 'utf-8');
+        e.target.value = ''; // 같은 파일 다시 선택 가능하게 초기화
+      };
+
+      // --- 동작: PDF 내보내기 (html2canvas → jsPDF addImage, 다중 페이지) ---
+      const handleExport = useCallback(async () => {
+        if (!title.trim() && !body.trim()) {
+          showToast('내보낼 내용이 없습니다.', 'error');
+          return;
+        }
+        const node = captureRef.current;
+        if (!node) return;
+        if (!window.html2canvas || !window.jspdf) {
+          showToast('PDF 라이브러리를 불러오지 못했습니다.', 'error');
+          return;
+        }
+
+        setExporting(true);
+        try {
+          // 고해상도(scale 2)로 캡처해 선명한 한글 렌더링
+          const canvas = await window.html2canvas(node, {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            useCORS: true,
+            logging: false,
+          });
+
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+
+          const pageWidth = pdf.internal.pageSize.getWidth();   // 595.28pt
+          const pageHeight = pdf.internal.pageSize.getHeight(); // 841.89pt
+          const imgWidth = pageWidth;
+
+          // px ↔ pt 변환 비율과, PDF 한 페이지에 해당하는 캔버스 픽셀 높이
+          const pxPerPt = canvas.width / pageWidth;
+          const pageHeightPx = Math.floor(pageHeight * pxPerPt);
+
+          // 캔버스 픽셀을 직접 읽어 "글자가 없는 가로줄(여백)"을 찾는다.
+          const ctx = canvas.getContext('2d');
+          const W = canvas.width;
+          const pixels = ctx.getImageData(0, 0, W, canvas.height).data;
+          const sampleStep = Math.max(1, Math.floor(W / 80));
+          const isBlankRow = (y) => {
+            for (let x = 0; x < W; x += sampleStep) {
+              const i = (y * W + x) * 4;
+              // 불투명하면서 흰색이 아니면(글자/선이 있으면) 빈 줄이 아님
+              if (pixels[i + 3] > 10 && (pixels[i] < 245 || pixels[i + 1] < 245 || pixels[i + 2] < 245)) {
+                return false;
+              }
+            }
+            return true;
+          };
+
+          // 페이지마다 슬라이스를 잘라 넣되, 경계가 글자 줄 한가운데면 위쪽 여백까지 올려 자른다.
+          const tmp = document.createElement('canvas');
+          const tctx = tmp.getContext('2d');
+          const searchWindow = Math.floor(pageHeightPx * 0.22); // 여백을 찾는 탐색 범위
+          const tailEps = Math.ceil(pxPerPt); // 1pt 정도의 자투리는 새 페이지로 만들지 않음
+          let y = 0;
+          let firstPage = true;
+
+          while (y < canvas.height - tailEps) {
+            let sliceH = Math.min(pageHeightPx, canvas.height - y);
+            let cutY = y + sliceH;
+
+            // 마지막 페이지가 아니라면, 경계 위쪽에서 빈 줄을 찾아 그 지점에서 자른다.
+            if (cutY < canvas.height) {
+              const limit = Math.max(y + 1, cutY - searchWindow);
+              for (let yy = cutY; yy >= limit; yy--) {
+                if (isBlankRow(yy)) { cutY = yy; break; }
+              }
+              sliceH = cutY - y; // 빈 줄을 못 찾으면 원래 높이 그대로(강제 분할)
+            }
+
+            // 슬라이스를 흰 배경 임시 캔버스에 그려 이미지화
+            tmp.width = W;
+            tmp.height = sliceH;
+            tctx.fillStyle = '#ffffff';
+            tctx.fillRect(0, 0, W, sliceH);
+            tctx.drawImage(canvas, 0, y, W, sliceH, 0, 0, W, sliceH);
+            const imgData = tmp.toDataURL('image/jpeg', 0.95);
+
+            if (!firstPage) pdf.addPage();
+            pdf.addImage(imgData, 'JPEG', 0, 0, imgWidth, sliceH / pxPerPt);
+            firstPage = false;
+
+            y = cutY;
+          }
+
+          pdf.save(safeFileName(title));
+          showToast('PDF를 내보냈습니다.');
+        } catch (err) {
+          showToast('PDF 생성 중 오류가 발생했습니다.', 'error');
+        } finally {
+          setExporting(false);
+        }
+      }, [title, body, showToast]);
+
+      return (
+        <div className="min-h-screen">
+          {/* 헤더 */}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white grid place-items-center font-bold">P</div>
+                <div>
+                  <h1 className="text-lg font-bold text-slate-800 leading-tight">문서 PDF 변환기</h1>
+                  <p className="text-xs text-slate-400 leading-tight">작성 · 불러오기 · 편집 · PDF 내보내기</p>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={handleNew}>＋ 새 문서</Button>
+            </div>
+          </header>
+
+          <main className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* 사이드바: 저장된 문서 목록 */}
+            <aside className="lg:col-span-4 xl:col-span-3 space-y-4">
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="font-semibold text-slate-700 text-sm">저장된 문서</h2>
+                  <Badge className="bg-slate-100 text-slate-500">{docs.length}개</Badge>
+                </div>
+                <DocList
+                  docs={docs}
+                  currentId={currentId}
+                  onSelect={handleSelect}
+                  onDelete={handleDelete}
+                />
+              </Card>
+
+              {/* 파일에서 불러오기 */}
+              <Card className="p-4">
+                <h2 className="font-semibold text-slate-700 text-sm mb-2">파일 불러오기</h2>
+                <p className="text-xs text-slate-400 mb-3">.txt 파일을 편집기에 불러올 수 있습니다.</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".txt,text/plain"
+                  onChange={handleFilePick}
+                  className="hidden"
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                >
+                  📂 .txt 파일 선택
+                </Button>
+              </Card>
+            </aside>
+
+            {/* 편집기 */}
+            <section className="lg:col-span-8 xl:col-span-9">
+              <Card className="p-5 sm:p-6">
+                <Input
+                  label="제목"
+                  placeholder="문서 제목을 입력하세요"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="mb-4"
+                />
+
+                <label className="block text-sm font-medium text-slate-700 mb-1">본문</label>
+                <textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="여기에 내용을 작성하세요. 줄바꿈과 빈 줄도 PDF에 그대로 반영됩니다."
+                  rows={18}
+                  className="w-full rounded-lg border border-slate-300 px-3.5 py-3 text-slate-900 placeholder-slate-400 leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition font-mono text-sm"
+                />
+
+                <div className="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <p className="text-xs text-slate-400">
+                    {charCount.toLocaleString('ko-KR')}자
+                    {currentId ? ' · 저장된 문서 편집 중' : ' · 새 문서'}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={handleSave}>💾 저장</Button>
+                    <Button onClick={handleExport} disabled={exporting}>
+                      {exporting ? (
+                        <>
+                          <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                          생성 중...
+                        </>
+                      ) : (
+                        <>⬇ PDF 내보내기</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+
+              <p className="text-xs text-slate-400 mt-3 px-1 leading-relaxed">
+                ℹ️ 한글은 기본 PDF 폰트로는 깨지기 때문에, 화면을 이미지로 캡처(html2canvas)한 뒤
+                jsPDF에 넣어 내보냅니다. 내용이 길면 자동으로 여러 페이지로 나뉩니다.
+              </p>
+            </section>
+          </main>
+
+          {/* 화면 밖 PDF 캡처용 템플릿 (사용자에게 보이지 않음) */}
+          <PdfTemplate innerRef={captureRef} title={title} body={body} />
+
+          <Toast message={toast.message} type={toast.type} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 렌더링
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

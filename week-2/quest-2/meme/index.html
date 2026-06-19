@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>짤 생성기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // ========================================
+    // 유틸리티 / 상수
+    // ========================================
+    // 폰트 크기 허용 범위 (조건 분기로 clamp 할 때 사용)
+    const MIN_FONT = 12;
+    const MAX_FONT = 120;
+
+    // 텍스트를 화면에 배치할 위치 후보 (배열)
+    const POSITIONS = [
+      { value: 'top', label: '상단' },
+      { value: 'middle', label: '중앙' },
+      { value: 'bottom', label: '하단' },
+    ];
+
+    // 빠른 글자색 선택용 색상 목록 (배열)
+    const QUICK_COLORS = ['#ffffff', '#ffe600', '#ff3b3b', '#22c55e', '#3b82f6', '#000000'];
+
+    // 값을 min~max 범위로 제한 (조건 분기)
+    const clamp = (n, min, max) => {
+      const num = Number(n);
+      if (isNaN(num)) return min;
+      if (num < min) return min;
+      if (num > max) return max;
+      return num;
+    };
+
+    // 고유 id 생성
+    let _seq = 0;
+    const nextId = () => Date.now() + (++_seq);
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', className = '', children, ...props }) {
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+        secondary: 'bg-slate-200 hover:bg-slate-300 text-slate-800',
+        danger: 'bg-rose-500 hover:bg-rose-600 text-white',
+        ghost: 'bg-transparent hover:bg-slate-100 text-slate-600',
+      };
+      const sizes = { sm: 'px-2.5 py-1 text-sm', md: 'px-4 py-2', lg: 'px-5 py-2.5 text-lg' };
+      return (
+        <button
+          className={`rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, error, className = '', ...props }) {
+      return (
+        <label className="block">
+          {label && <span className="block text-sm font-medium text-slate-600 mb-1">{label}</span>}
+          <input
+            className={`w-full px-3 py-2 rounded-lg border ${error ? 'border-rose-400' : 'border-slate-300'} focus:outline-none focus:ring-2 focus:ring-indigo-400 ${className}`}
+            {...props}
+          />
+          {error && <span className="block text-xs text-rose-500 mt-1">{error}</span>}
+        </label>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return <div className={`bg-white rounded-2xl shadow-sm p-5 ${className}`}>{children}</div>;
+    }
+
+    function Badge({ color = 'indigo', children }) {
+      const colors = {
+        indigo: 'bg-indigo-100 text-indigo-700',
+        green: 'bg-emerald-100 text-emerald-700',
+        rose: 'bg-rose-100 text-rose-700',
+        slate: 'bg-slate-100 text-slate-600',
+      };
+      return <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors[color]}`}>{children}</span>;
+    }
+
+    // ========================================
+    // 🧩 텍스트 항목 편집 행 컴포넌트
+    // ========================================
+    function TextRow({ item, index, onChange, onRemove, removable }) {
+      // 폰트 크기 유효성 (조건 분기)
+      const sizeError =
+        item.fontSize === '' ? null
+        : (Number(item.fontSize) < MIN_FONT || Number(item.fontSize) > MAX_FONT)
+        ? `${MIN_FONT}~${MAX_FONT} 사이`
+        : null;
+
+      return (
+        <div className="border border-slate-100 rounded-xl p-3 space-y-3 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <Badge color="slate">텍스트 {index + 1}</Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-rose-500"
+              onClick={onRemove}
+              disabled={!removable}
+              aria-label="텍스트 삭제"
+            >
+              ✕
+            </Button>
+          </div>
+
+          {/* 텍스트 내용 편집 */}
+          <Input
+            placeholder="문구를 입력하세요 (예: 이게 되네?)"
+            value={item.text}
+            onChange={(e) => onChange({ ...item, text: e.target.value })}
+            aria-label="텍스트 내용"
+          />
+
+          <div className="flex flex-wrap gap-3 items-end">
+            {/* 위치 선택 */}
+            <label className="block">
+              <span className="block text-sm font-medium text-slate-600 mb-1">위치</span>
+              <select
+                className="px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                value={item.position}
+                onChange={(e) => onChange({ ...item, position: e.target.value })}
+                aria-label="위치"
+              >
+                {/* 반복문: 위치 후보 배열 렌더링 */}
+                {POSITIONS.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+
+            {/* 폰트 크기 */}
+            <div className="w-28">
+              <Input
+                type="number"
+                min={MIN_FONT}
+                max={MAX_FONT}
+                label="크기"
+                value={item.fontSize}
+                onChange={(e) => onChange({ ...item, fontSize: e.target.value })}
+                error={sizeError}
+              />
+            </div>
+
+            {/* 글자색 */}
+            <label className="block">
+              <span className="block text-sm font-medium text-slate-600 mb-1">색상</span>
+              <input
+                type="color"
+                value={item.color}
+                onChange={(e) => onChange({ ...item, color: e.target.value })}
+                className="w-12 h-10 rounded-lg border border-slate-300 cursor-pointer bg-white"
+                aria-label="글자색"
+              />
+            </label>
+
+            {/* 대문자 변환 토글 */}
+            <label className="flex items-center gap-2 cursor-pointer pb-2">
+              <input
+                type="checkbox"
+                checked={item.uppercase}
+                onChange={(e) => onChange({ ...item, uppercase: e.target.checked })}
+                className="w-4 h-4 accent-indigo-600"
+              />
+              <span className="text-sm text-slate-600">대문자</span>
+            </label>
+          </div>
+
+          {/* 빠른 색상 선택 (반복문) */}
+          <div className="flex gap-2">
+            {QUICK_COLORS.map((c) => (
+              <button
+                key={c}
+                onClick={() => onChange({ ...item, color: c })}
+                className={`w-6 h-6 rounded-full border-2 ${item.color.toLowerCase() === c ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200'}`}
+                style={{ backgroundColor: c }}
+                aria-label={`색상 ${c}`}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+    function App() {
+      // 불러온 이미지 객체 (없으면 null → 조건 분기로 placeholder 표시)
+      const [image, setImage] = useState(null);
+      const [fileName, setFileName] = useState('');
+
+      // 텍스트 항목 배열 — 배열 + 반복문의 핵심 (기본: 상단/하단 클래식 짤)
+      const [texts, setTexts] = useState([
+        { id: nextId(), text: '위쪽 문구', position: 'top', fontSize: 48, color: '#ffffff', uppercase: false },
+        { id: nextId(), text: '아래쪽 문구', position: 'bottom', fontSize: 48, color: '#ffffff', uppercase: false },
+      ]);
+
+      const canvasRef = useRef(null);
+      const fileInputRef = useRef(null);
+
+      // ----------------------------------------
+      // 이미지 불러오기 (FileReader)
+      // ----------------------------------------
+      const handleFile = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return; // 조건 분기: 파일 없음
+        if (!file.type.startsWith('image/')) {
+          alert('이미지 파일만 불러올 수 있어요.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const img = new Image();
+          img.onload = () => {
+            setImage(img);
+            setFileName(file.name);
+          };
+          img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+
+      // ----------------------------------------
+      // 텍스트 항목 추가 / 변경 / 삭제
+      // ----------------------------------------
+      const addText = () =>
+        setTexts((prev) => [
+          ...prev,
+          { id: nextId(), text: '새 문구', position: 'middle', fontSize: 48, color: '#ffffff', uppercase: false },
+        ]);
+
+      const changeText = (id, updated) =>
+        setTexts((prev) => prev.map((t) => (t.id === id ? updated : t)));
+
+      // 최소 1개는 유지 (조건 분기)
+      const removeText = (id) =>
+        setTexts((prev) => (prev.length <= 1 ? prev : prev.filter((t) => t.id !== id)));
+
+      // ----------------------------------------
+      // Canvas 렌더링 (이미지 + 모든 텍스트)
+      //   - 배열을 반복문으로 순회하며 각 텍스트를 그림
+      //   - 조건 분기: 이미지 유무, 위치별 좌표, 대문자 변환
+      // ----------------------------------------
+      const draw = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        // 조건 분기: 이미지가 없으면 placeholder만 그림
+        if (!image) {
+          canvas.width = 600;
+          canvas.height = 400;
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#94a3b8';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = '20px sans-serif';
+          ctx.fillText('이미지를 불러오면 여기에 표시돼요', canvas.width / 2, canvas.height / 2);
+          return;
+        }
+
+        // 캔버스를 원본 이미지 크기에 맞춤 (다운로드 화질 유지)
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+        // 반복문: 텍스트 배열을 순회하며 캔버스에 그림
+        texts.forEach((item) => {
+          const content = (item.text || '').trim();
+          if (!content) return; // 조건 분기: 빈 문구는 건너뜀
+
+          const fontSize = clamp(item.fontSize || 48, MIN_FONT, MAX_FONT);
+          // 조건 분기: 대문자 옵션 적용
+          const display = item.uppercase ? content.toUpperCase() : content;
+
+          ctx.font = `bold ${fontSize}px 'Arial Black', Impact, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillStyle = item.color || '#ffffff';
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = Math.max(2, fontSize / 12);
+          ctx.lineJoin = 'round';
+
+          // 조건 분기: 위치별 y좌표 / baseline 결정
+          const padding = fontSize * 0.4;
+          let y;
+          if (item.position === 'top') {
+            ctx.textBaseline = 'top';
+            y = padding;
+          } else if (item.position === 'bottom') {
+            ctx.textBaseline = 'bottom';
+            y = canvas.height - padding;
+          } else {
+            ctx.textBaseline = 'middle';
+            y = canvas.height / 2;
+          }
+          const x = canvas.width / 2;
+
+          // 클래식 짤 룩: 검은 외곽선(stroke) + 흰색/지정색 채우기(fill)
+          ctx.strokeText(display, x, y);
+          ctx.fillText(display, x, y);
+        });
+      }, [image, texts]);
+
+      // 이미지나 텍스트/스타일이 바뀔 때마다 다시 그림
+      useEffect(() => {
+        draw();
+      }, [draw]);
+
+      // ----------------------------------------
+      // 다운로드 (내보내기) — canvas → PNG
+      // 저장 위치(디렉토리)를 사용자가 직접 지정 (File System Access API)
+      // ----------------------------------------
+      const canvasToBlob = (canvas) =>
+        new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+
+      const handleDownload = async () => {
+        const canvas = canvasRef.current;
+        if (!canvas || !image) return; // 조건 분기: 이미지 없으면 막음
+
+        const blob = await canvasToBlob(canvas);
+        if (!blob) return;
+        const suggestedName = `meme-${Date.now()}.png`;
+
+        // 조건 분기: 브라우저가 '다른 이름으로 저장' 대화상자를 지원하면
+        // 사용자가 저장 디렉토리와 파일명을 직접 선택할 수 있음
+        if (window.showSaveFilePicker) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName,
+              types: [
+                {
+                  description: 'PNG 이미지',
+                  accept: { 'image/png': ['.png'] },
+                },
+              ],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return;
+          } catch (err) {
+            // 사용자가 취소하면 조용히 종료 (그 외 오류는 아래 폴백으로)
+            if (err && err.name === 'AbortError') return;
+          }
+        }
+
+        // 폴백: 미지원 브라우저에서는 기본 다운로드 폴더로 저장
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      // 활성 텍스트 개수 (빈 문구 제외) — 조건 분기 통계
+      const activeCount = texts.filter((t) => (t.text || '').trim()).length;
+
+      return (
+        <div className="min-h-screen py-8 px-4">
+          <div className="max-w-5xl mx-auto space-y-6">
+
+            {/* 헤더 */}
+            <header className="text-center">
+              <h1 className="text-3xl font-bold text-slate-800">🖼️ 짤 생성기</h1>
+              <p className="text-slate-500 mt-1">이미지를 불러오고 문구를 얹어 나만의 짤을 만들어 내보내세요.</p>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* 왼쪽: 미리보기 + 다운로드 */}
+              <div className="space-y-6">
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">1️⃣ 미리보기</h2>
+                  <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-center overflow-hidden">
+                    {/* 캔버스: 반응형으로 가로폭에 맞춤 */}
+                    <canvas
+                      ref={canvasRef}
+                      className="max-w-full h-auto rounded-lg shadow-sm"
+                      style={{ maxHeight: '480px' }}
+                    />
+                  </div>
+
+                  {/* 조건 분기: 이미지 유무에 따라 다운로드 안내 */}
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <Button
+                      variant="primary"
+                      size="lg"
+                      onClick={handleDownload}
+                      disabled={!image}
+                    >
+                      ⬇️ PNG로 내보내기
+                    </Button>
+                    {image ? (
+                      <Badge color="green">{activeCount}개 문구 적용됨</Badge>
+                    ) : (
+                      <span className="text-sm text-slate-400">이미지를 먼저 불러오세요.</span>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              {/* 오른쪽: 컨트롤 */}
+              <div className="space-y-6">
+                {/* 2. 이미지 불러오기 */}
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">2️⃣ 이미지 불러오기</h2>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFile}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button variant="secondary" onClick={() => fileInputRef.current && fileInputRef.current.click()}>
+                      📁 파일 선택
+                    </Button>
+                    {/* 조건 분기: 불러온 파일명 표시 */}
+                    {fileName ? (
+                      <span className="text-sm text-slate-600 truncate max-w-[200px]">{fileName}</span>
+                    ) : (
+                      <span className="text-sm text-slate-400">아직 선택된 파일이 없어요.</span>
+                    )}
+                  </div>
+                </Card>
+
+                {/* 3. 텍스트 배치 */}
+                <Card>
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="font-bold text-slate-700">3️⃣ 텍스트 배치</h2>
+                    <Badge color="slate">{texts.length}개</Badge>
+                  </div>
+
+                  <div className="space-y-3">
+                    {/* 반복문: 텍스트 배열을 편집 행으로 렌더링 */}
+                    {texts.map((t, i) => (
+                      <TextRow
+                        key={t.id}
+                        item={t}
+                        index={i}
+                        onChange={(updated) => changeText(t.id, updated)}
+                        onRemove={() => removeText(t.id)}
+                        removable={texts.length > 1}
+                      />
+                    ))}
+                  </div>
+
+                  <Button variant="secondary" size="sm" className="mt-3" onClick={addText}>
+                    + 텍스트 추가
+                  </Button>
+                </Card>
+              </div>
+            </div>
+
+            <footer className="text-center text-slate-400 text-xs pb-6">
+              배열 · 반복문 · 조건 분기로 캔버스에 그리는 짤 생성기
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR 코드 생성기</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <!-- QR 생성 라이브러리 (버전 고정) — 전역 QRCode 노출, 캔버스로 렌더링 -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // ========================================
+    // 유틸리티 / 상수
+    // ========================================
+    // QR 크기 허용 범위 (조건 분기로 clamp 할 때 사용)
+    const MIN_SIZE = 120;
+    const MAX_SIZE = 600;
+
+    // 디자인 프리셋 목록 (배열) — 각 프리셋은 전경(dark)/배경(light) 색을 지정
+    const PRESETS = [
+      { value: 'classic', label: '클래식', dark: '#000000', light: '#ffffff' },
+      { value: 'indigo',  label: '인디고', dark: '#4f46e5', light: '#eef2ff' },
+      { value: 'mint',    label: '민트',   dark: '#0f766e', light: '#ecfdf5' },
+      { value: 'sunset',  label: '선셋',   dark: '#b91c1c', light: '#fff7ed' },
+      { value: 'ocean',   label: '오션',   dark: '#0e3a8a', light: '#eff6ff' },
+      { value: 'mono',    label: '모노',   dark: '#334155', light: '#f1f5f9' },
+    ];
+
+    // 오류 정정 레벨 목록 (배열) — 높을수록 손상에 강하지만 더 촘촘해짐
+    const EC_LEVELS = [
+      { value: 'L', label: 'L (낮음)' },
+      { value: 'M', label: 'M (보통)' },
+      { value: 'Q', label: 'Q (높음)' },
+      { value: 'H', label: 'H (최고)' },
+    ];
+
+    // 값을 min~max 범위로 제한 (조건 분기)
+    const clamp = (n, min, max) => {
+      const num = Number(n);
+      if (isNaN(num)) return min;
+      if (num < min) return min;
+      if (num > max) return max;
+      return num;
+    };
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', className = '', children, ...props }) {
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+        secondary: 'bg-slate-200 hover:bg-slate-300 text-slate-800',
+        danger: 'bg-rose-500 hover:bg-rose-600 text-white',
+        ghost: 'bg-transparent hover:bg-slate-100 text-slate-600',
+      };
+      const sizes = { sm: 'px-2.5 py-1 text-sm', md: 'px-4 py-2', lg: 'px-5 py-2.5 text-lg' };
+      return (
+        <button
+          className={`rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${variants[variant]} ${sizes[size]} ${className}`}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    function Input({ label, error, className = '', ...props }) {
+      return (
+        <label className="block">
+          {label && <span className="block text-sm font-medium text-slate-600 mb-1">{label}</span>}
+          <input
+            className={`w-full px-3 py-2 rounded-lg border ${error ? 'border-rose-400' : 'border-slate-300'} focus:outline-none focus:ring-2 focus:ring-indigo-400 ${className}`}
+            {...props}
+          />
+          {error && <span className="block text-xs text-rose-500 mt-1">{error}</span>}
+        </label>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return <div className={`bg-white rounded-2xl shadow-sm p-5 ${className}`}>{children}</div>;
+    }
+
+    function Badge({ color = 'indigo', children }) {
+      const colors = {
+        indigo: 'bg-indigo-100 text-indigo-700',
+        green: 'bg-emerald-100 text-emerald-700',
+        rose: 'bg-rose-100 text-rose-700',
+        slate: 'bg-slate-100 text-slate-600',
+      };
+      return <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors[color]}`}>{children}</span>;
+    }
+
+    // ========================================
+    // 🚀 App Component
+    // ========================================
+    function App() {
+      // 입력 텍스트/주소 (비어 있으면 조건 분기로 placeholder 표시)
+      const [text, setText] = useState('https://www.google.com');
+
+      // 선택한 디자인 프리셋 값
+      const [presetValue, setPresetValue] = useState('classic');
+
+      // QR 크기 (px)
+      const [size, setSize] = useState(280);
+
+      // 오류 정정 레벨
+      const [ecLevel, setEcLevel] = useState('M');
+
+      // QR이 그려질 컨테이너 div (qrcodejs가 이 안에 canvas/img를 생성)
+      const qrBoxRef = useRef(null);
+
+      // 현재 선택된 프리셋 객체 찾기 (조건 분기 포함)
+      const preset = PRESETS.find((p) => p.value === presetValue) || PRESETS[0];
+
+      // 빈 입력 여부 판단
+      const isEmpty = text.trim() === '';
+
+      // EC 레벨 문자열('L'~'H') → qrcodejs의 CorrectLevel 상수로 매핑 (조건 분기)
+      const ecConst = (lv) => {
+        // QRCode.CorrectLevel = { L, M, Q, H }
+        if (lv === 'L') return QRCode.CorrectLevel.L;
+        if (lv === 'Q') return QRCode.CorrectLevel.Q;
+        if (lv === 'H') return QRCode.CorrectLevel.H;
+        return QRCode.CorrectLevel.M; // 기본값
+      };
+
+      // ----------------------------------------
+      // QR 렌더링
+      //   - 조건 분기: 빈 입력이면 그리지 않음
+      //   - 크기 clamp(조건 분기), 프리셋 색상/EC 레벨 반영
+      // ----------------------------------------
+      const draw = useCallback(() => {
+        const box = qrBoxRef.current;
+        if (!box) return;
+
+        // 매번 새로 그리므로 이전 결과 비움
+        box.innerHTML = '';
+
+        // 조건 분기: 입력이 비어 있으면 QR을 그리지 않음
+        if (isEmpty) return;
+
+        const drawSize = clamp(size, MIN_SIZE, MAX_SIZE);
+
+        try {
+          new QRCode(box, {
+            text: text,
+            width: drawSize,
+            height: drawSize,
+            colorDark: preset.dark,
+            colorLight: preset.light,
+            correctLevel: ecConst(ecLevel),
+          });
+        } catch (err) {
+          // 입력이 너무 길거나 오류 발생 시 안내
+          console.error(err);
+          box.innerHTML = '<p class="text-sm text-rose-500">내용이 너무 길어요. 오류 정정 레벨을 낮추거나 내용을 줄여보세요.</p>';
+        }
+      }, [text, size, ecLevel, preset, isEmpty]);
+
+      // 텍스트/디자인/크기/EC 레벨이 바뀔 때마다 다시 그림
+      useEffect(() => {
+        draw();
+      }, [draw]);
+
+      // ----------------------------------------
+      // 다운로드 — qrcodejs가 만든 canvas → PNG (toBlob → anchor download)
+      // ----------------------------------------
+      const handleDownload = () => {
+        const box = qrBoxRef.current;
+        if (!box || isEmpty) return; // 조건 분기: 빈 입력이면 막음
+
+        const canvas = box.querySelector('canvas');
+        if (!canvas) return; // 조건 분기: 캔버스가 아직 없으면 중단
+
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `qr-${Date.now()}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      };
+
+      return (
+        <div className="min-h-screen py-8 px-4">
+          <div className="max-w-5xl mx-auto space-y-6">
+
+            {/* 헤더 */}
+            <header className="text-center">
+              <h1 className="text-3xl font-bold text-slate-800">🔳 QR 코드 생성기</h1>
+              <p className="text-slate-500 mt-1">주소나 텍스트를 입력하고 디자인을 골라 QR 코드를 만들어 내보내세요.</p>
+            </header>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* 왼쪽: 미리보기 + 다운로드 */}
+              <div className="space-y-6">
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">1️⃣ 미리보기</h2>
+                  <div
+                    className="rounded-xl p-4 flex items-center justify-center min-h-[320px]"
+                    style={{ backgroundColor: isEmpty ? '#f8fafc' : preset.light }}
+                  >
+                    {/* 조건 분기: 빈 입력이면 안내, 아니면 캔버스 표시 */}
+                    {isEmpty ? (
+                      <div className="text-center text-slate-400 animate-fadeIn">
+                        <div className="text-5xl mb-2">📭</div>
+                        <p className="text-sm">주소나 텍스트를 입력하면<br />여기에 QR 코드가 나타나요.</p>
+                      </div>
+                    ) : (
+                      <div
+                        ref={qrBoxRef}
+                        className="inline-flex p-3 bg-white rounded-lg shadow-sm animate-fadeIn [&_img]:rounded [&_canvas]:rounded"
+                      />
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <Button variant="primary" size="lg" onClick={handleDownload} disabled={isEmpty}>
+                      ⬇️ PNG로 내보내기
+                    </Button>
+                    {/* 조건 분기: 입력 유무에 따른 상태 안내 */}
+                    {isEmpty ? (
+                      <span className="text-sm text-slate-400">먼저 내용을 입력하세요.</span>
+                    ) : (
+                      <Badge color="green">{preset.label} · {clamp(size, MIN_SIZE, MAX_SIZE)}px · {ecLevel}</Badge>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              {/* 오른쪽: 컨트롤 */}
+              <div className="space-y-6">
+                {/* 2. 주소/텍스트 입력 */}
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">2️⃣ 주소 / 텍스트</h2>
+                  <Input
+                    placeholder="예: https://example.com 또는 아무 텍스트"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    aria-label="QR 내용"
+                  />
+                  {/* 조건 분기: 빈 입력 안내 */}
+                  {isEmpty && (
+                    <p className="text-xs text-rose-500 mt-2">내용을 입력하면 QR 코드가 자동으로 생성돼요.</p>
+                  )}
+                </Card>
+
+                {/* 3. 디자인 선택 */}
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">3️⃣ 디자인 선택</h2>
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* 반복문: 프리셋 배열을 선택 버튼(스와치)으로 렌더링 */}
+                    {PRESETS.map((p) => {
+                      // 조건 분기: 선택된 프리셋 하이라이트
+                      const selected = p.value === presetValue;
+                      return (
+                        <button
+                          key={p.value}
+                          onClick={() => setPresetValue(p.value)}
+                          className={`rounded-xl p-3 border-2 transition-colors flex flex-col items-center gap-2 ${
+                            selected ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                          aria-label={`디자인 ${p.label}`}
+                          aria-pressed={selected}
+                        >
+                          {/* 색상 미리보기 스와치 */}
+                          <span
+                            className="w-10 h-10 rounded-lg border border-slate-200 flex items-center justify-center"
+                            style={{ backgroundColor: p.light }}
+                          >
+                            <span className="w-5 h-5 rounded" style={{ backgroundColor: p.dark }} />
+                          </span>
+                          <span className={`text-xs font-medium ${selected ? 'text-indigo-700' : 'text-slate-600'}`}>
+                            {p.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Card>
+
+                {/* 4. 크기 / 오류 정정 */}
+                <Card>
+                  <h2 className="font-bold text-slate-700 mb-3">4️⃣ 크기 & 옵션</h2>
+
+                  {/* 크기 슬라이더 */}
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium text-slate-600">크기</span>
+                      <Badge color="slate">{clamp(size, MIN_SIZE, MAX_SIZE)} px</Badge>
+                    </div>
+                    <input
+                      type="range"
+                      min={MIN_SIZE}
+                      max={MAX_SIZE}
+                      step="20"
+                      value={clamp(size, MIN_SIZE, MAX_SIZE)}
+                      onChange={(e) => setSize(Number(e.target.value))}
+                      className="w-full accent-indigo-600"
+                      aria-label="QR 크기"
+                    />
+                    <div className="flex justify-between text-xs text-slate-400 mt-1">
+                      <span>{MIN_SIZE}px</span>
+                      <span>{MAX_SIZE}px</span>
+                    </div>
+                  </div>
+
+                  {/* 오류 정정 레벨 */}
+                  <div>
+                    <span className="block text-sm font-medium text-slate-600 mb-1">오류 정정 레벨</span>
+                    <div className="flex rounded-lg overflow-hidden border border-slate-300">
+                      {/* 반복문: EC 레벨 배열을 토글 버튼으로 렌더링 */}
+                      {EC_LEVELS.map((lv) => {
+                        // 조건 분기: 선택된 레벨 강조
+                        const active = lv.value === ecLevel;
+                        return (
+                          <button
+                            key={lv.value}
+                            onClick={() => setEcLevel(lv.value)}
+                            className={`flex-1 px-2 py-2 text-xs font-medium border-l first:border-l-0 border-slate-300 ${
+                              active ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                            aria-pressed={active}
+                          >
+                            {lv.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">레벨이 높을수록 손상에 강하지만 패턴이 더 촘촘해져요.</p>
+                  </div>
+                </Card>
+              </div>
+            </div>
+
+            <footer className="text-center text-slate-400 text-xs pb-6">
+              배열 · 반복문 · 조건 분기로 만드는 QR 코드 생성기
+            </footer>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
