@@ -29,7 +29,7 @@
     // ========================================
     // React Hooks
     // ========================================
-    const { useState, useMemo, useEffect, useCallback } = React;
+    const { useState, useEffect, useCallback } = React;
 
     // ========================================
     // 🔑 OpenWeatherMap API 설정
@@ -98,26 +98,36 @@
     // ========================================
     // 🗓️ 날짜/시간 포맷 (한국어)
     // ========================================
+    // 🇰🇷 모든 시간 표기는 한국시간(KST, Asia/Seoul) 기준으로 고정
+    const KST = "Asia/Seoul";
+
     function formatKoreanDate(date) {
-      const days = ["일", "월", "화", "수", "목", "금", "토"];
-      const y = date.getFullYear();
-      const m = date.getMonth() + 1;
-      const d = date.getDate();
-      const w = days[date.getDay()];
-      return `${y}년 ${m}월 ${d}일 ${w}요일`;
+      const d = new Intl.DateTimeFormat("ko-KR", {
+        timeZone: KST, year: "numeric", month: "long", day: "numeric",
+      }).format(date);
+      const w = new Intl.DateTimeFormat("ko-KR", { timeZone: KST, weekday: "long" }).format(date);
+      return `${d} ${w}`;
     }
 
+    // 현재 시각 (예: 오후 3:37) — 한국시간
+    function formatKstClock(date) {
+      return new Intl.DateTimeFormat("ko-KR", {
+        timeZone: KST, hour: "numeric", minute: "2-digit", hour12: true,
+      }).format(date);
+    }
+
+    // 시간대별 예보 라벨 (예: 오후 3시) — 한국시간
     function formatHour(date) {
-      let h = date.getHours();
-      const ampm = h < 12 ? "오전" : "오후";
-      let hh = h % 12;
-      if (hh === 0) hh = 12;
-      return `${ampm} ${hh}시`;
+      return new Intl.DateTimeFormat("ko-KR", {
+        timeZone: KST, hour: "numeric", hour12: true,
+      }).format(date);
     }
 
-    // 로컬 타임존 기준 날짜 키 (UTC 변환으로 인한 날짜 밀림 방지)
+    // 한국시간 기준 날짜 키(YYYY-MM-DD) — 타임존에 따른 날짜 밀림 방지
     function dayKey(date) {
-      return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: KST, year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(date);
     }
 
     // ========================================
@@ -317,7 +327,7 @@
     // ========================================
     // 🧩 섹션 컴포넌트
     // ========================================
-    function CurrentWeather({ data, dateLabel }) {
+    function CurrentWeather({ data, dateLabel, timeLabel }) {
       return (
         <div className="text-center text-white float-in">
           <div className="flex items-center justify-center gap-2 text-white/90">
@@ -330,6 +340,9 @@
             <span className="text-lg font-medium">{data.location}</span>
           </div>
           <p className="text-white/70 text-sm mt-1">{dateLabel}</p>
+          <p className="text-white font-semibold text-base mt-0.5">
+            🕒 {timeLabel} <span className="text-white/60 text-xs font-normal">한국시간</span>
+          </p>
 
           <div className="text-8xl mt-6 mb-2" aria-hidden="true">{WEATHER_ICON[data.condition]}</div>
           <div className="text-7xl font-extralight tracking-tight">
@@ -436,8 +449,14 @@
     // 🚀 App
     // ========================================
     function App() {
-      const today = useMemo(() => new Date(), []);
-      const dateLabel = useMemo(() => formatKoreanDate(today), [today]);
+      // 실시간 시계 (1초마다 갱신) — 한국시간으로 표기
+      const [now, setNow] = useState(() => new Date());
+      useEffect(() => {
+        const id = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(id);
+      }, []);
+      const dateLabel = formatKoreanDate(now);
+      const timeLabel = formatKstClock(now);
 
       const [data, setData] = useState(null);
       const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -512,7 +531,7 @@
             {status === "error" && <ErrorView message={error} onRetry={locate} />}
             {status === "ready" && data && (
               <>
-                <CurrentWeather data={data.current} dateLabel={dateLabel} />
+                <CurrentWeather data={data.current} dateLabel={dateLabel} timeLabel={timeLabel} />
                 <StatsRow data={data.current} />
                 <HourlyForecast items={data.hourly} />
                 <WeeklyForecast items={data.weekly} />
