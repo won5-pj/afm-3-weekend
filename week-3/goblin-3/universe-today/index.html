@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UNIVERSE TODAY · NASA 오늘의 천문학 사진</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN 버전 고정. Babel 은 7.x 로 고정 (8.x 미지원). -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,800;0,900;1,400;1,600&family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #f2ede3;        /* 본문 잉크 (따뜻한 아이보리) */
+      --ink-soft: #c9c2b4;
+      --paper: #0a0a10;      /* 우주 배경 */
+      --gold: #c8a35a;       /* 매거진 금박 포인트 */
+    }
+    body { background: var(--paper); }
+
+    /* 폰트 역할 분리 — 매거진 타이포그래피 */
+    .font-display { font-family: 'Playfair Display', Georgia, serif; }
+    .font-serif   { font-family: 'Lora', Georgia, serif; }
+    .font-sans    { font-family: 'Inter', system-ui, sans-serif; }
+
+    /* 별이 박힌 우주 배경 (정적 + 아주 느린 반짝임) */
+    .starfield {
+      background-color: #0a0a10;
+      background-image:
+        radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.7), transparent),
+        radial-gradient(1.5px 1.5px at 75% 15%, rgba(255,255,255,0.5), transparent),
+        radial-gradient(1px 1px at 50% 60%, rgba(255,255,255,0.6), transparent),
+        radial-gradient(1px 1px at 85% 75%, rgba(255,255,255,0.45), transparent),
+        radial-gradient(1.5px 1.5px at 12% 80%, rgba(255,255,255,0.55), transparent),
+        radial-gradient(1px 1px at 35% 12%, rgba(255,255,255,0.4), transparent),
+        radial-gradient(1px 1px at 65% 45%, rgba(255,255,255,0.5), transparent),
+        radial-gradient(2px 2px at 90% 35%, rgba(200,163,90,0.5), transparent);
+      background-repeat: no-repeat;
+    }
+    @keyframes twinkle { 0%,100%{opacity:.35} 50%{opacity:1} }
+    .twinkle { animation: twinkle 4s ease-in-out infinite; }
+
+    /* 첫 글자 드롭캡 — 잡지 본문 느낌 */
+    .dropcap::first-letter {
+      font-family: 'Playfair Display', serif;
+      float: left;
+      font-size: 4.6rem;
+      line-height: 0.82;
+      font-weight: 800;
+      padding: 0.06em 0.12em 0 0;
+      color: var(--gold);
+    }
+    /* 본문 2단 조판 (넓은 화면에서만) */
+    @media (min-width: 1024px) {
+      .columns-magazine { column-count: 2; column-gap: 3rem; }
+    }
+    .columns-magazine p { break-inside: avoid-column; }
+
+    @keyframes floatIn { from { opacity:0; transform: translateY(18px);} to { opacity:1; transform: translateY(0);} }
+    .float-in { animation: floatIn .7s cubic-bezier(0.22,1,0.36,1) both; }
+    @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+    .fade-in { animation: fadeIn 1s ease both; }
+    @keyframes spin { to { transform: rotate(360deg);} }
+    .spin { animation: spin .9s linear infinite; }
+    @keyframes shimmer { 100% { transform: translateX(100%);} }
+    .shimmer::after {
+      content:""; position:absolute; inset:0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+      animation: shimmer 1.6s infinite;
+    }
+    .no-scrollbar::-webkit-scrollbar { display:none; }
+    .no-scrollbar { -ms-overflow-style:none; scrollbar-width:none; }
+
+    /* 본문 링크 */
+    .prose-body a { color: var(--gold); text-decoration: underline; text-underline-offset: 2px; }
+  </style>
+</head>
+<body class="text-stone-200">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ========================================
+    // 🚀 NASA APOD API 설정
+    //    무료 키 발급: https://api.nasa.gov  (DEMO_KEY 는 IP당 50회/일 제한)
+    //    아래 값을 본인 키로 바꾸면 제한이 크게 늘어납니다.
+    // ========================================
+    const API_KEY = "Bo8nfc52pVkoWx02v7qyd360Xe6nKp4MKOF43Wxh";
+    const APOD_URL = "https://api.nasa.gov/planetary/apod";
+    const FIRST_APOD = "1995-06-16"; // APOD 서비스 시작일
+
+    // ========================================
+    // 🗓️ 날짜 유틸 (전부 YYYY-MM-DD 문자열 기준 — 타임존 밀림 방지)
+    // ========================================
+    // 미 동부(APOD 갱신 기준) 오늘 날짜. 한국이 먼저 자정을 넘겨도 어제 사진을 정확히 가리킴.
+    function todayET() {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+      }).format(new Date());
+    }
+    function shiftDay(ymd, delta) {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + delta);
+      return dt.toISOString().slice(0, 10);
+    }
+    function clampDate(ymd) {
+      const t = todayET();
+      if (ymd > t) return t;
+      if (ymd < FIRST_APOD) return FIRST_APOD;
+      return ymd;
+    }
+    // 표시용 한국어 날짜 (정오 UTC 로 고정해 날짜 밀림 방지)
+    function prettyDate(ymd) {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d, 12));
+      const date = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric" }).format(dt);
+      const week = new Intl.DateTimeFormat("ko-KR", { weekday: "long" }).format(dt);
+      return `${date} ${week}`;
+    }
+    function engDate(ymd) {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d, 12));
+      return new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" }).format(dt).toUpperCase();
+    }
+    // 매거진 "권/호" — 연도를 권으로, 그 해 누적 일수를 호로
+    function volumeIssue(ymd) {
+      const [y, m, d] = ymd.split("-").map(Number);
+      const start = Date.UTC(y, 0, 0);
+      const now = Date.UTC(y, m - 1, d);
+      const day = Math.floor((now - start) / 86400000);
+      return { vol: y, issue: String(day).padStart(3, "0") };
+    }
+    // 읽는 시간 추정 (영문 기준 분당 200단어)
+    function readingMinutes(text) {
+      const words = (text || "").trim().split(/\s+/).filter(Boolean).length;
+      return Math.max(1, Math.round(words / 200));
+    }
+
+    // ========================================
+    // 🌐 APOD 데이터 가져오기
+    // ========================================
+    async function fetchApod({ date, random } = {}) {
+      const params = new URLSearchParams({ api_key: API_KEY, thumbs: "true" });
+      if (random) params.set("count", "1");
+      else if (date) params.set("date", date);
+
+      let res;
+      try {
+        res = await fetch(`${APOD_URL}?${params.toString()}`);
+      } catch (e) {
+        throw new Error("네트워크 연결을 확인해 주세요.");
+      }
+
+      if (res.status === 429) {
+        throw new Error("요청이 너무 많습니다. 잠시 후 다시 시도하거나, api.nasa.gov 에서 발급한 본인 키로 교체해 주세요. (DEMO_KEY 는 하루 50회 제한)");
+      }
+      if (res.status === 403) {
+        throw new Error("API 키가 올바르지 않습니다. 코드 상단의 API_KEY 를 확인해 주세요.");
+      }
+      if (res.status === 400) {
+        throw new Error("해당 날짜의 천문 사진을 찾을 수 없습니다.");
+      }
+      if (!res.ok) {
+        throw new Error("천문 사진을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+
+      const data = await res.json();
+      return Array.isArray(data) ? data[0] : data;
+    }
+
+    // ========================================
+    // 🌐 한국어 번역 (MyMemory — 무료·키 불필요)
+    //    익명 한도: IP당 5,000자/일. 아래 EMAIL 을 채우면 50,000자/일로 늘어납니다.
+    //    요청당 q 길이 제한(~500자)이 있어 문장 단위로 쪼개 보냅니다.
+    // ========================================
+    const MYMEMORY_URL = "https://api.mymemory.translated.net/get";
+    const MYMEMORY_EMAIL = ""; // 예: "you@example.com" — 채우면 하루 한도가 10배로
+
+    // HTML 엔티티(&#39; 등) 복원
+    function decodeEntities(s) {
+      const t = document.createElement("textarea");
+      t.innerHTML = s;
+      return t.value;
+    }
+
+    // 문장 경계 기준으로 max 길이 이하 덩어리로 분할 (긴 문장은 단어 단위로 강제 분할)
+    function chunkText(text, max = 480) {
+      const sentences = text.replace(/\s+/g, " ").trim().match(/[^.!?]+[.!?]*\s*/g) || [text];
+      const chunks = [];
+      let buf = "";
+      const flush = () => { if (buf.trim()) chunks.push(buf.trim()); buf = ""; };
+      for (const s of sentences) {
+        if (s.length > max) {                 // 한 문장이 한도를 넘으면 단어 단위로
+          flush();
+          let cur = "";
+          for (const w of s.split(" ")) {
+            if ((cur + " " + w).trim().length > max) { if (cur) chunks.push(cur.trim()); cur = w; }
+            else cur += " " + w;
+          }
+          buf = cur;
+        } else if ((buf + s).length > max) { flush(); buf = s; }
+        else buf += s;
+      }
+      flush();
+      return chunks;
+    }
+
+    async function translateToKorean(text) {
+      const chunks = chunkText(text);
+      const out = [];
+      for (const chunk of chunks) {
+        const params = new URLSearchParams({ q: chunk, langpair: "en|ko" });
+        if (MYMEMORY_EMAIL) params.set("de", MYMEMORY_EMAIL);
+        let r;
+        try {
+          r = await fetch(`${MYMEMORY_URL}?${params.toString()}`);
+        } catch (e) {
+          throw new Error("번역 서비스에 연결하지 못했습니다.");
+        }
+        if (!r.ok) throw new Error("번역 서비스에 연결하지 못했습니다.");
+        const j = await r.json();
+        const status = Number(j.responseStatus);
+        const tr = j.responseData && j.responseData.translatedText;
+        if (status === 403 || /YOU USED ALL AVAILABLE/i.test(tr || "")) {
+          throw new Error("오늘 무료 번역 한도를 모두 사용했습니다. 잠시 후 다시 시도하거나, 코드의 MYMEMORY_EMAIL 을 채워 한도를 늘려 주세요.");
+        }
+        if (!tr) throw new Error("번역 결과를 받지 못했습니다.");
+        out.push(decodeEntities(tr));
+      }
+      return out.join(" ");
+    }
+
+    // ========================================
+    // 🎬 미디어 — 이미지 또는 영상
+    // ========================================
+    function HeroMedia({ item, onLoaded }) {
+      const [loaded, setLoaded] = useState(false);
+      useEffect(() => { setLoaded(false); }, [item.url]);
+
+      if (item.media_type === "video") {
+        return (
+          <div className="relative w-full aspect-video bg-black">
+            <iframe
+              key={item.url}
+              src={item.url}
+              title={item.title}
+              className="absolute inset-0 w-full h-full"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        );
+      }
+
+      return (
+        <div className="relative w-full bg-black/60 overflow-hidden">
+          {!loaded && <div className="absolute inset-0 shimmer bg-stone-800/40" />}
+          <img
+            key={item.url}
+            src={item.url}
+            alt={item.title}
+            onLoad={() => { setLoaded(true); onLoaded && onLoaded(); }}
+            className={`w-full h-auto object-cover transition-opacity duration-700 ${loaded ? "opacity-100" : "opacity-0"}`}
+            style={{ minHeight: loaded ? "auto" : "60vh" }}
+          />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📰 매거진 머리글 (Masthead)
+    // ========================================
+    function Masthead({ date }) {
+      const { vol, issue } = volumeIssue(date);
+      return (
+        <header className="text-center pt-10 pb-6 px-4 fade-in">
+          <div className="flex items-center justify-center gap-4 text-[var(--gold)]/80">
+            <span className="hidden sm:block h-px w-16 bg-[var(--gold)]/40" />
+            <span className="font-sans tracking-[0.45em] text-[10px] uppercase">National Aeronautics & Space Administration</span>
+            <span className="hidden sm:block h-px w-16 bg-[var(--gold)]/40" />
+          </div>
+          <h1 className="font-display font-black text-5xl sm:text-7xl tracking-tight mt-3 text-[var(--ink)]"
+              style={{ textShadow: "0 2px 30px rgba(200,163,90,0.25)" }}>
+            Universe&nbsp;Today
+          </h1>
+          <p className="font-serif italic text-[var(--ink-soft)] text-base sm:text-lg mt-1">
+            오늘의 천문학 사진 · Astronomy Picture of the Day
+          </p>
+          <div className="flex items-center justify-center gap-3 mt-5 text-[var(--ink-soft)] font-sans text-[11px] uppercase tracking-[0.2em]">
+            <span className="h-px flex-1 max-w-[80px] bg-white/15" />
+            <span>Vol. {vol}</span><span className="text-[var(--gold)]">◆</span>
+            <span>No. {issue}</span><span className="text-[var(--gold)]">◆</span>
+            <span>{engDate(date)}</span>
+            <span className="h-px flex-1 max-w-[80px] bg-white/15" />
+          </div>
+        </header>
+      );
+    }
+
+    // ========================================
+    // 🎛️ 날짜 탐색 바
+    // ========================================
+    function ControlBar({ date, onPick, onShift, onToday, onRandom, loading }) {
+      const isToday = date === todayET();
+      const atFirst = date === FIRST_APOD;
+      const btn = "font-sans text-xs tracking-wide rounded-full border border-white/15 px-4 py-2 text-[var(--ink-soft)] hover:text-[var(--ink)] hover:border-[var(--gold)]/60 hover:bg-white/5 transition disabled:opacity-30 disabled:hover:border-white/15 disabled:hover:bg-transparent";
+      return (
+        <div className="sticky top-0 z-20 backdrop-blur-md bg-[var(--paper)]/70 border-y border-white/10">
+          <div className="max-w-5xl mx-auto px-4 py-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+            <button className={btn} onClick={() => onShift(-1)} disabled={loading || atFirst} title="이전 날 (←)">‹ 이전</button>
+            <input
+              type="date"
+              value={date}
+              min={FIRST_APOD}
+              max={todayET()}
+              onChange={(e) => e.target.value && onPick(e.target.value)}
+              disabled={loading}
+              className="font-sans text-xs rounded-full border border-white/15 bg-transparent px-3 py-2 text-[var(--ink)] [color-scheme:dark] outline-none focus:border-[var(--gold)]/60"
+            />
+            <button className={btn} onClick={() => onShift(1)} disabled={loading || isToday} title="다음 날 (→)">다음 ›</button>
+            <button className={btn} onClick={onToday} disabled={loading || isToday}>오늘</button>
+            <button className={`${btn} text-[var(--gold)] border-[var(--gold)]/40`} onClick={onRandom} disabled={loading} title="무작위 사진">✦ 랜덤</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 본문 기사
+    // ========================================
+    function Article({ item, lang, trans, onLang }) {
+      const minutes = readingMinutes(item.explanation);
+      const credit = (item.copyright || "").replace(/\s+/g, " ").trim();
+      const ko = lang === "ko";
+      const seg = (active) =>
+        `font-sans text-[11px] tracking-[0.15em] uppercase px-4 py-1.5 rounded-full transition ${
+          active ? "bg-[var(--gold)]/15 text-[var(--gold)]" : "text-[var(--ink-soft)] hover:text-[var(--ink)]"}`;
+
+      return (
+        <article className="max-w-5xl mx-auto px-5 sm:px-8">
+          {/* 표제 */}
+          <div className="text-center mt-12 mb-8 float-in">
+            <p className="font-sans uppercase tracking-[0.35em] text-[11px] text-[var(--gold)] mb-3">Feature · 오늘의 한 장</p>
+            <h2 className="font-display font-bold text-3xl sm:text-5xl leading-tight text-[var(--ink)]">{item.title}</h2>
+            <div className="flex items-center justify-center gap-3 mt-4 text-[var(--ink-soft)] font-sans text-[11px] uppercase tracking-[0.2em]">
+              <span>{engDate(item.date)}</span>
+              <span className="text-[var(--gold)]">·</span>
+              <span>{minutes} min read</span>
+              {credit && (<><span className="text-[var(--gold)]">·</span><span className="normal-case tracking-normal italic font-serif">© {credit}</span></>)}
+            </div>
+
+            {/* 원문 / 한국어 토글 */}
+            <div className="inline-flex items-center mt-6 rounded-full border border-white/15 p-1 bg-white/5">
+              <button className={seg(!ko)} onClick={() => onLang("en")}>English</button>
+              <button className={seg(ko)} onClick={() => onLang("ko")}>한국어</button>
+            </div>
+
+            <div className="flex items-center justify-center gap-2 mt-6">
+              <span className="h-px w-10 bg-[var(--gold)]/50" />
+              <span className="text-[var(--gold)] text-xs">✦</span>
+              <span className="h-px w-10 bg-[var(--gold)]/50" />
+            </div>
+          </div>
+
+          {/* 해설 본문 */}
+          {ko && trans.status === "loading" && (
+            <div className="flex flex-col items-center justify-center py-16 fade-in">
+              <div className="w-9 h-9 rounded-full border-2 border-white/20 border-t-[var(--gold)] spin" />
+              <p className="mt-4 font-serif italic text-[var(--ink-soft)]">한국어로 옮기는 중…</p>
+            </div>
+          )}
+
+          {ko && trans.status === "error" && (
+            <div className="max-w-xl mx-auto text-center py-10 fade-in">
+              <p className="font-serif text-[var(--ink)] leading-relaxed">{trans.error}</p>
+              <button onClick={() => onLang("en")}
+                className="mt-5 font-sans text-xs tracking-wide rounded-full border border-[var(--gold)]/50 px-5 py-2.5 text-[var(--gold)] hover:bg-[var(--gold)]/10 transition">
+                원문(English)으로 보기
+              </button>
+            </div>
+          )}
+
+          {(!ko || trans.status === "done") && (
+            <div className="prose-body columns-magazine font-serif text-[1.07rem] leading-[1.85] text-[var(--ink)]/90 fade-in">
+              <p className="dropcap mb-5 text-justify">{ko ? trans.text : item.explanation}</p>
+            </div>
+          )}
+
+          <p className="font-sans text-[11px] uppercase tracking-[0.2em] text-[var(--ink-soft)] mt-6 text-center">
+            {ko && trans.status === "done"
+              ? "기계 번역 · MyMemory (원문: NASA APOD)"
+              : "원문 해설 · NASA Astronomy Picture of the Day"}
+          </p>
+        </article>
+      );
+    }
+
+    // ========================================
+    // 🔗 푸터 (출처/HD 링크)
+    // ========================================
+    function Footer({ item }) {
+      const link = "font-sans text-xs tracking-wide rounded-full border border-white/15 px-5 py-2.5 text-[var(--ink-soft)] hover:text-[var(--ink)] hover:border-[var(--gold)]/60 hover:bg-white/5 transition inline-flex items-center gap-2";
+      const apodPage = `https://apod.nasa.gov/apod/ap${item.date.slice(2).replace(/-/g, "")}.html`;
+      return (
+        <footer className="max-w-5xl mx-auto px-5 sm:px-8 mt-14 mb-16">
+          <div className="border-t border-white/10 pt-8 flex flex-wrap items-center justify-center gap-3">
+            {item.media_type === "image" && item.hdurl && (
+              <a className={link} href={item.hdurl} target="_blank" rel="noopener noreferrer">⬇ 고화질 원본 보기</a>
+            )}
+            <a className={link} href={apodPage} target="_blank" rel="noopener noreferrer">↗ NASA APOD 원문 페이지</a>
+            <a className={link} href="https://api.nasa.gov" target="_blank" rel="noopener noreferrer">✦ 무료 API 키 발급</a>
+          </div>
+          <p className="text-center font-serif italic text-[var(--ink-soft)]/70 text-sm mt-8">
+            “우리는 별의 먼지로 만들어졌고, 그래서 우주가 스스로를 알아가는 한 방법이다.” — Carl Sagan
+          </p>
+          <p className="text-center font-sans text-[10px] uppercase tracking-[0.3em] text-[var(--ink-soft)]/50 mt-4">
+            Universe Today · Powered by NASA Open APIs
+          </p>
+        </footer>
+      );
+    }
+
+    // ========================================
+    // ⏳ 로딩 / ❗ 에러
+    // ========================================
+    function LoadingView() {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[55vh] text-center">
+          <div className="w-12 h-12 rounded-full border-2 border-white/20 border-t-[var(--gold)] spin" />
+          <p className="mt-5 font-serif italic text-[var(--ink-soft)]">오늘의 우주를 현상하는 중…</p>
+        </div>
+      );
+    }
+    function ErrorView({ message, onRetry }) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-6">
+          <div className="text-5xl mb-4">🪐</div>
+          <p className="font-serif text-[var(--ink)] max-w-md leading-relaxed">{message}</p>
+          <button onClick={onRetry}
+            className="mt-6 font-sans text-xs tracking-wide rounded-full border border-[var(--gold)]/50 px-6 py-2.5 text-[var(--gold)] hover:bg-[var(--gold)]/10 transition">
+            다시 시도
+          </button>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🌌 App
+    // ========================================
+    function App() {
+      const [date, setDate] = useState(todayET());
+      const [item, setItem] = useState(null);
+      const [status, setStatus] = useState("loading"); // loading | ready | error
+      const [error, setError] = useState("");
+
+      // 번역: 언어 선택 + 날짜별 캐시
+      const [lang, setLang] = useState("en"); // en | ko
+      const [trans, setTrans] = useState({ status: "idle", text: null, error: "" }); // idle|loading|done|error
+      const cacheRef = useRef({}); // { [date]: 번역문 }
+
+      // 현재 사진이 한국어 모드면 번역 확보 (캐시 우선, 없으면 호출)
+      useEffect(() => {
+        if (!item || lang !== "ko") return;
+        const cached = cacheRef.current[item.date];
+        if (cached) { setTrans({ status: "done", text: cached, error: "" }); return; }
+        let cancelled = false;
+        setTrans({ status: "loading", text: null, error: "" });
+        translateToKorean(item.explanation)
+          .then((tx) => { if (cancelled) return; cacheRef.current[item.date] = tx; setTrans({ status: "done", text: tx, error: "" }); })
+          .catch((e) => { if (cancelled) return; setTrans({ status: "error", text: null, error: e.message || "번역에 실패했습니다." }); });
+        return () => { cancelled = true; };
+      }, [item, lang]);
+
+      const load = useCallback(async ({ date, random } = {}) => {
+        setStatus("loading");
+        setError("");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        try {
+          const data = await fetchApod({ date, random });
+          if (!data || !data.url) throw new Error("천문 사진 데이터를 받지 못했습니다.");
+          setItem(data);
+          setDate(data.date); // 랜덤 시 실제 받은 날짜로 동기화
+          setStatus("ready");
+        } catch (e) {
+          setError(e.message || "알 수 없는 오류가 발생했습니다.");
+          setStatus("error");
+        }
+      }, []);
+
+      // 최초 진입: 오늘의 사진
+      useEffect(() => { load({ date: todayET() }); }, [load]);
+
+      const goDate = useCallback((ymd) => load({ date: clampDate(ymd) }), [load]);
+      const shift = useCallback((delta) => load({ date: clampDate(shiftDay(date, delta)) }), [date, load]);
+
+      // 키보드 좌우 화살표로 날짜 이동
+      useEffect(() => {
+        const onKey = (e) => {
+          if (status === "loading") return;
+          if (e.target.tagName === "INPUT") return;
+          if (e.key === "ArrowLeft" && date !== FIRST_APOD) shift(-1);
+          if (e.key === "ArrowRight" && date !== todayET()) shift(1);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+      }, [date, status, shift]);
+
+      return (
+        <div className="starfield min-h-screen w-full">
+          {/* 상단 비네트 + 별 반짝임 레이어 */}
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-0 twinkle starfield opacity-40" />
+            <div className="relative">
+              <Masthead date={date} />
+              <ControlBar
+                date={date}
+                onPick={goDate}
+                onShift={shift}
+                onToday={() => goDate(todayET())}
+                onRandom={() => load({ random: true })}
+                loading={status === "loading"}
+              />
+
+              {status === "loading" && <LoadingView />}
+              {status === "error" && <ErrorView message={error} onRetry={() => load({ date })} />}
+              {status === "ready" && item && (
+                <main className="fade-in">
+                  {/* 표지 이미지 — 풀블리드 히어로 */}
+                  <figure className="max-w-6xl mx-auto mt-8 px-2 sm:px-6">
+                    <div className="relative rounded-sm overflow-hidden ring-1 ring-white/10 shadow-2xl shadow-black/60">
+                      <HeroMedia item={item} />
+                      {/* 표지 캡션 오버레이 */}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent pt-24 pb-5 px-5 sm:px-8">
+                        <p className="font-sans uppercase tracking-[0.3em] text-[10px] text-[var(--gold)]">{prettyDate(item.date)}</p>
+                        <h2 className="font-display font-bold text-2xl sm:text-4xl text-white leading-tight mt-1 max-w-3xl"
+                            style={{ textShadow: "0 2px 20px rgba(0,0,0,0.8)" }}>
+                          {item.title}
+                        </h2>
+                      </div>
+                      {item.media_type === "video" && (
+                        <span className="absolute top-3 left-3 font-sans text-[10px] uppercase tracking-widest bg-black/60 text-white px-2.5 py-1 rounded-full border border-white/20">▶ Video</span>
+                      )}
+                    </div>
+                    <figcaption className="text-center font-serif italic text-[var(--ink-soft)] text-sm mt-3">
+                      {item.copyright ? `사진: ${item.copyright.replace(/\s+/g, " ").trim()}` : "Image Credit: NASA / public domain"}
+                    </figcaption>
+                  </figure>
+
+                  <Article item={item} lang={lang} trans={trans} onLang={setLang} />
+                  <Footer item={item} />
+                </main>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
