@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🎨 AI 이미지 스튜디오</title>
+
+  <!-- ⚠️ CDN 버전 고정. Babel 7.x, React/ReactDOM 핀 (미고정 시 인라인 변환이 깨짐). -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse at top, #1e1b4b 0%, #0f172a 50%, #020617 100%);
+      background-attachment: fixed;
+    }
+
+    /* 등장 애니메이션 */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .enter { animation: fadeInUp 0.4s ease-out both; }
+
+    /* 생성 중 셔머(스켈레톤) */
+    @keyframes shimmer {
+      0%   { background-position: -468px 0; }
+      100% { background-position: 468px 0; }
+    }
+    .shimmer {
+      background: linear-gradient(
+        90deg,
+        rgba(148,163,184,0.08) 0%,
+        rgba(148,163,184,0.20) 40%,
+        rgba(148,163,184,0.08) 80%
+      );
+      background-size: 936px 100%;
+      animation: shimmer 1.6s linear infinite;
+    }
+
+    .scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scroll::-webkit-scrollbar-track { background: transparent; }
+    .scroll::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); border-radius: 9999px; }
+    .scroll::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.55); }
+
+    textarea { resize: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    const API_BASE_URL = '/api';
+
+    // 스타일 프리셋: label(화면 표시) + modifier(실제 프롬프트에 덧붙는 영문 스타일 지시)
+    const STYLE_PRESETS = [
+      {
+        key: 'citypop',
+        label: '시티팝 스타일',
+        emoji: '🌆',
+        modifier:
+          '1980s Japanese city pop aesthetic, retro anime illustration, neon sunset, vaporwave color palette, nostalgic and dreamy',
+      },
+      {
+        key: 'simpsons',
+        label: '심슨 스타일',
+        emoji: '🟡',
+        // ⚠️ "The Simpsons" 등 저작권 IP 이름을 직접 넣으면 Gemini가 생성을 거부(PROHIBITED_CONTENT)함.
+        // IP 이름 없이 특징만 묘사해 같은 느낌을 낸다.
+        modifier:
+          'yellow-skinned American prime-time cartoon style, thick bold black outlines, big round eyes, overbite, flat bright colors, satirical sitcom animation look',
+      },
+      {
+        key: 'dotgraphic',
+        label: '도트 그래픽 스타일',
+        emoji: '🟦',
+        modifier:
+          'pixel art, 8-bit and 16-bit dot graphics, retro video game sprite style, crisp pixels, limited color palette',
+      },
+    ];
+
+    // 입력 + 선택 스타일을 합쳐 최종 프롬프트 구성.
+    // hasImage=true 이면 "원본 이미지 변환" 지시문으로 구성한다.
+    function buildPrompt(subject, styleKey, hasImage) {
+      const s = (subject || '').trim();
+      const preset = STYLE_PRESETS.find((p) => p.key === styleKey);
+      const mod = preset ? preset.modifier : '';
+      if (hasImage) {
+        const instr = mod
+          ? `Redraw the attached image in the following art style. Keep the same subject, but apply the style strongly and restyle the entire image: ${mod}`
+          : 'Transform the attached image as described.';
+        return s ? `${instr}. ${s}` : instr;
+      }
+      if (s && mod) return `${s}, ${mod}`;
+      return s || mod;
+    }
+
+    // 업로드 이미지를 캔버스로 축소(최대 1024px)해 data URL(PNG)로 변환 — 전송 용량 절감
+    function loadAndDownscale(file, maxDim) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('파일을 읽지 못했어요.'));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error('이미지를 불러오지 못했어요.'));
+          img.onload = () => {
+            const max = maxDim || 1024;
+            const scale = Math.min(1, max / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/png'));
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // 캔버스 nearest-neighbor 픽셀화 (+ 색 단계 축소) — 도트 그래픽 변환 보강용.
+    // 모델이 사진→픽셀아트 변환을 거부하므로, 도트 변환만 확실하게 직접 처리한다.
+    function pixelate(dataUrl, cols) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('픽셀화에 실패했어요.'));
+        img.onload = () => {
+          const c = Math.max(8, cols || 64);
+          const aspect = (img.height / img.width) || 1;
+          const sw = c;
+          const sh = Math.max(1, Math.round(c * aspect));
+
+          // 1) 작게 다운스케일
+          const small = document.createElement('canvas');
+          small.width = sw; small.height = sh;
+          const sctx = small.getContext('2d');
+          sctx.imageSmoothingEnabled = false;
+          sctx.drawImage(img, 0, 0, sw, sh);
+
+          // 2) 색 단계 축소(포스터화)로 레트로 팔레트 느낌
+          try {
+            const id = sctx.getImageData(0, 0, sw, sh);
+            const px = id.data;
+            const levels = 6;
+            const step = 255 / (levels - 1);
+            for (let i = 0; i < px.length; i += 4) {
+              px[i]     = Math.round(Math.round(px[i] / step) * step);
+              px[i + 1] = Math.round(Math.round(px[i + 1] / step) * step);
+              px[i + 2] = Math.round(Math.round(px[i + 2] / step) * step);
+            }
+            sctx.putImageData(id, 0, 0);
+          } catch (_e) { /* getImageData 실패 시 포스터화 생략 */ }
+
+          // 3) nearest-neighbor 로 크게 업스케일 → 또렷한 사각 픽셀
+          const outW = 512;
+          const outH = Math.max(1, Math.round(512 * aspect));
+          const out = document.createElement('canvas');
+          out.width = outW; out.height = outH;
+          const octx = out.getContext('2d');
+          octx.imageSmoothingEnabled = false;
+          octx.drawImage(small, 0, 0, sw, sh, 0, 0, outW, outH);
+
+          resolve(out.toDataURL('image/png'));
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    // ========================================
+    // 🎨 컴포넌트
+    // ========================================
+
+    function Header() {
+      return (
+        <header className="flex items-center gap-3 px-5 py-5 sm:px-8">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-500 to-indigo-600 text-2xl shadow-lg ring-1 ring-white/15">
+            🎨
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-white sm:text-2xl">AI 이미지 스튜디오</h1>
+            <p className="text-xs text-slate-400 sm:text-sm">
+              스타일 프롬프트를 입력하면 이미지를 만들어 드려요
+            </p>
+          </div>
+        </header>
+      );
+    }
+
+    function StyleChip({ preset, active, disabled, onClick }) {
+      return (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onClick}
+          className={[
+            'flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+            active
+              ? 'bg-gradient-to-r from-fuchsia-500 to-indigo-500 text-white shadow-lg ring-1 ring-white/20'
+              : 'bg-slate-800/70 text-slate-200 ring-1 ring-white/10 hover:bg-slate-700/70',
+          ].join(' ')}
+        >
+          <span>{preset.emoji}</span>
+          {preset.label}
+        </button>
+      );
+    }
+
+    function ResultStage({ loading, current, error }) {
+      if (loading) {
+        return (
+          <div className="enter flex aspect-square w-full items-center justify-center overflow-hidden rounded-2xl ring-1 ring-white/10">
+            <div className="shimmer flex h-full w-full flex-col items-center justify-center gap-3 text-slate-300">
+              <svg className="h-10 w-10 animate-spin text-fuchsia-300" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              <p className="text-sm">붓을 놀리는 중… 🖌️</p>
+            </div>
+          </div>
+        );
+      }
+
+      if (error) {
+        return (
+          <div className="flex aspect-square w-full flex-col items-center justify-center gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-6 text-center text-rose-100 ring-1 ring-white/5">
+            <span className="text-4xl">⚠️</span>
+            <p className="text-sm">{error}</p>
+          </div>
+        );
+      }
+
+      if (current && current.image) {
+        return (
+          <figure className="enter overflow-hidden rounded-2xl ring-1 ring-white/10">
+            <img src={current.image} alt={current.prompt} className="block w-full" />
+            <figcaption className="space-y-2 bg-slate-900/70 px-4 py-3">
+              <p className="line-clamp-2 text-xs text-slate-300">{current.prompt}</p>
+              <a
+                href={current.image}
+                download={`studio-${current.id}.png`}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-100 ring-1 ring-white/10 transition hover:bg-slate-700"
+              >
+                ⬇️ 다운로드
+              </a>
+            </figcaption>
+          </figure>
+        );
+      }
+
+      // 빈 상태
+      return (
+        <div className="flex aspect-square w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 p-6 text-center text-slate-400">
+          <span className="text-5xl">🖼️</span>
+          <p className="text-sm">무엇을 그릴지 적고, 스타일을 골라 <b className="text-slate-200">생성</b>을 눌러보세요</p>
+        </div>
+      );
+    }
+
+    function HistoryGallery({ items, onPick }) {
+      if (!items.length) return null;
+      return (
+        <section className="mt-8">
+          <h2 className="mb-3 px-1 text-sm font-semibold text-slate-300">🗂️ 생성 기록</h2>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {items.map((it) => (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => onPick(it)}
+                title={it.prompt}
+                className="group relative aspect-square overflow-hidden rounded-xl ring-1 ring-white/10 transition hover:ring-fuchsia-400/60"
+              >
+                <img src={it.image} alt={it.prompt} className="h-full w-full object-cover transition group-hover:scale-105" />
+              </button>
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    // ========================================
+    // 📄 메인
+    // ========================================
+    function App() {
+      const [subject, setSubject] = useState('');
+      const [styleKey, setStyleKey] = useState('citypop');
+      const [sourceImage, setSourceImage] = useState(null); // 변환할 원본 이미지(data URL)
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [current, setCurrent] = useState(null);
+      const [history, setHistory] = useState([]);
+      const idRef = useRef(0);
+      const fileRef = useRef(null);
+
+      const hasImage = !!sourceImage;
+      const finalPrompt = buildPrompt(subject, styleKey, hasImage);
+      const canGenerate = !loading &&
+        (hasImage ? (!!styleKey || subject.trim().length > 0) : finalPrompt.length > 0);
+
+      const onPickFile = async (e) => {
+        const file = e.target.files && e.target.files[0];
+        e.target.value = ''; // 같은 파일 다시 선택 가능하도록 초기화
+        if (!file) return;
+        setError('');
+        try {
+          const dataUrl = await loadAndDownscale(file, 1024);
+          setSourceImage(dataUrl);
+        } catch (err) {
+          setError(err.message || '이미지를 불러오지 못했어요.');
+        }
+      };
+
+      const generate = useCallback(async () => {
+        if (!canGenerate) return;
+
+        // 도트 그래픽 + 원본 이미지 → 캔버스 픽셀화로 즉시 변환 (AI 미사용, 100% 도트 보장)
+        if (sourceImage && styleKey === 'dotgraphic') {
+          setError('');
+          setLoading(true);
+          try {
+            const out = await pixelate(sourceImage, 64);
+            const item = {
+              id: ++idRef.current,
+              image: out,
+              prompt: '도트 그래픽 변환 (캔버스 픽셀화)',
+              caption: '',
+            };
+            setCurrent(item);
+            setHistory((prev) => [item, ...prev]);
+          } catch (err) {
+            setError(err.message || '픽셀화에 실패했어요.');
+            setCurrent(null);
+          } finally {
+            setLoading(false);
+          }
+          return;
+        }
+
+        const prompt = buildPrompt(subject, styleKey, !!sourceImage);
+        setError('');
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sourceImage ? { prompt, image: sourceImage } : { prompt }),
+          });
+
+          let data = null;
+          try { data = await res.json(); } catch (_) { /* ignore */ }
+
+          if (!res.ok || !data || typeof data.image !== 'string') {
+            const serverMsg = data && data.error ? data.error : null;
+            throw new Error(serverMsg || '이미지 생성에 실패했어요. 잠시 후 다시 시도해 주세요.');
+          }
+
+          const item = {
+            id: ++idRef.current,
+            image: data.image,
+            prompt,
+            caption: data.caption || '',
+          };
+          setCurrent(item);
+          setHistory((prev) => [item, ...prev]);
+        } catch (err) {
+          setError(err.message || '문제가 발생했어요. 잠시 후 다시 시도해 주세요.');
+          setCurrent(null);
+        } finally {
+          setLoading(false);
+        }
+      }, [subject, styleKey, sourceImage, canGenerate]);
+
+      const handleKeyDown = (e) => {
+        // Ctrl/Cmd + Enter 로 생성
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          generate();
+        }
+      };
+
+      return (
+        <div className="mx-auto min-h-[100dvh] w-full max-w-2xl px-4 pb-12 sm:px-6">
+          <Header />
+
+          {/* 입력 패널 */}
+          <div className="rounded-2xl bg-slate-900/60 p-4 ring-1 ring-white/10 backdrop-blur sm:p-5">
+            {/* 원본 이미지 불러오기 (선택) — 넣으면 이미지 변환 모드 */}
+            <div className="mb-4">
+              <p className="mb-2 text-sm font-medium text-slate-300">
+                원본 이미지 <span className="text-slate-500">(선택 · 넣으면 변환 모드)</span>
+              </p>
+              <input ref={fileRef} type="file" accept="image/*" onChange={onPickFile} className="hidden" />
+              {sourceImage ? (
+                <div className="flex items-center gap-3">
+                  <img src={sourceImage} alt="원본 이미지" className="h-20 w-20 rounded-lg object-cover ring-1 ring-white/15" />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current && fileRef.current.click()}
+                      disabled={loading}
+                      className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-100 ring-1 ring-white/10 transition hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      다른 이미지
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSourceImage(null)}
+                      disabled={loading}
+                      className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-rose-200 ring-1 ring-white/10 transition hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      ✕ 제거
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileRef.current && fileRef.current.click()}
+                  disabled={loading}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 px-4 py-4 text-sm text-slate-300 transition hover:border-fuchsia-400/50 hover:text-white disabled:opacity-40"
+                >
+                  🖼️ 이미지 불러오기
+                </button>
+              )}
+            </div>
+
+            <label className="mb-2 block text-sm font-medium text-slate-300">
+              {hasImage ? '어떻게 바꿀까요? (추가 설명 · 선택)' : '무엇을 그릴까요?'}
+            </label>
+            <textarea
+              rows={2}
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={loading}
+              placeholder={hasImage ? '예: 배경을 밤하늘로 바꿔줘 (비워도 됨)' : '예: 해질녘 도시를 달리는 빨간 스포츠카'}
+              className="w-full rounded-xl bg-slate-800/70 px-4 py-3 text-[15px] text-slate-100 placeholder-slate-500 outline-none ring-1 ring-white/10 focus:ring-fuchsia-400/50 disabled:opacity-50"
+            />
+
+            {/* 스타일 프리셋 */}
+            <div className="mt-4">
+              <p className="mb-2 text-sm font-medium text-slate-300">스타일 프리셋</p>
+              <div className="flex flex-wrap gap-2">
+                {STYLE_PRESETS.map((p) => (
+                  <StyleChip
+                    key={p.key}
+                    preset={p}
+                    active={styleKey === p.key}
+                    disabled={loading}
+                    onClick={() => setStyleKey((cur) => (cur === p.key ? null : p.key))}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 최종 프롬프트 미리보기 (도트 변환은 캔버스 처리 안내로 대체) */}
+            {hasImage && styleKey === 'dotgraphic' ? (
+              <p className="mt-3 rounded-lg bg-indigo-500/10 px-3 py-2 text-xs text-indigo-200 ring-1 ring-indigo-400/25">
+                🟦 도트 변환은 캔버스 픽셀화로 즉시 처리됩니다 (AI 미사용 · 추가 설명은 무시돼요)
+              </p>
+            ) : finalPrompt ? (
+              <p className="mt-3 rounded-lg bg-slate-800/50 px-3 py-2 text-xs text-slate-400">
+                <span className="text-slate-500">최종 프롬프트 · </span>{finalPrompt}
+              </p>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={generate}
+              disabled={!canGenerate}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-fuchsia-500 to-indigo-600 px-4 py-3 text-base font-semibold text-white shadow-lg transition hover:from-fuchsia-400 hover:to-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading
+                ? (hasImage ? '변환 중…' : '생성 중…')
+                : (hasImage ? '🪄 이미지 변환' : '✨ 이미지 생성')}
+            </button>
+            <p className="mt-2 text-center text-[11px] text-slate-500">
+              Ctrl(⌘) + Enter 로도 생성 · 이미지 생성은 수 초~수십 초 걸릴 수 있어요
+            </p>
+          </div>
+
+          {/* 결과 */}
+          <div className="mt-6">
+            <ResultStage loading={loading} current={current} error={error} />
+          </div>
+
+          {/* 기록 */}
+          <HistoryGallery items={history} onPick={(it) => { setCurrent(it); setError(''); }} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

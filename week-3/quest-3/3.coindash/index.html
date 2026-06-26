@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>📈 CoinDash · 실시간 코인 대시보드</title>
+
+  <!-- ⚠️ CDN 버전 고정. Babel 7.x, React/ReactDOM 핀 (미고정 시 인라인 변환이 깨짐). -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse at top, #0b2a2a 0%, #0f172a 45%, #020617 100%);
+      background-attachment: fixed;
+      color: #e2e8f0;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .enter { animation: fadeInUp 0.35s ease-out both; }
+
+    /* 가격 상승/하락 시 깜빡임 */
+    @keyframes flashUp {
+      0%   { background-color: rgba(34, 197, 94, 0.22); }
+      100% { background-color: transparent; }
+    }
+    @keyframes flashDown {
+      0%   { background-color: rgba(239, 68, 68, 0.22); }
+      100% { background-color: transparent; }
+    }
+    .flash-up   { animation: flashUp 0.7s ease-out; }
+    .flash-down { animation: flashDown 0.7s ease-out; }
+
+    /* 라이브 점 깜빡임 */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.35; transform: scale(0.8); }
+    }
+    .live-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+    /* 거래량 급증 ⚡ 번개 배지 */
+    @keyframes bolt-flash {
+      0%, 100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 2px rgba(234,179,8,0.9)); }
+      50%      { opacity: 0.6; transform: scale(1.15); filter: drop-shadow(0 0 6px rgba(234,179,8,1)); }
+    }
+    .bolt { animation: bolt-flash 0.9s ease-in-out infinite; }
+
+    /* 급변 카드 노란 테두리 은은한 글로우 */
+    @keyframes spike-glow {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(234,179,8,0.55), 0 0 14px rgba(234,179,8,0.15); }
+      50%      { box-shadow: 0 0 0 1px rgba(234,179,8,0.85), 0 0 22px rgba(234,179,8,0.30); }
+    }
+    .spike-card { animation: spike-glow 1.6s ease-in-out infinite; }
+
+    .card-hover { transition: transform 0.15s ease, border-color 0.15s ease; }
+    .card-hover:hover { transform: translateY(-2px); }
+
+    /* 스켈레톤 셔머 */
+    @keyframes shimmer {
+      0%   { background-position: -468px 0; }
+      100% { background-position: 468px 0; }
+    }
+    .shimmer {
+      background: linear-gradient(90deg,
+        rgba(148,163,184,0.06) 0%,
+        rgba(148,163,184,0.18) 40%,
+        rgba(148,163,184,0.06) 80%) !important;
+      background-size: 936px 100%;
+      animation: shimmer 1.6s linear infinite;
+    }
+
+    .scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scroll::-webkit-scrollbar-track { background: transparent; }
+    .scroll::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.30); border-radius: 9999px; }
+    .scroll::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.50); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    const API_BASE_URL = '/api';
+    // 24h 등락률 색 (글로벌 관례: 상승 초록, 하락 빨강)
+    const UP = '#22c55e';
+    const DOWN = '#ef4444';
+    // 1시간 추세색: 상승추세 = 초록, 하락추세 = 빨강, 보합 = 회색
+    const TREND_UP = '#22c55e';
+    const TREND_DOWN = '#ef4444';
+    const TREND_FLAT = '#94a3b8';
+    const SPIKE_YELLOW = '#eab308';
+
+    const WATCH_KEY = 'coindash.watchlist';
+    const DEFAULT_WATCH = [
+      { id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin' },
+      { id: 'ethereum', symbol: 'ETH', name: 'Ethereum' },
+      { id: 'ripple', symbol: 'XRP', name: 'XRP' },
+      { id: 'solana', symbol: 'SOL', name: 'Solana' },
+      { id: 'dogecoin', symbol: 'DOGE', name: 'Dogecoin' },
+    ];
+
+    function trendColor(trend) {
+      if (trend === 'up') return TREND_UP;
+      if (trend === 'down') return TREND_DOWN;
+      return TREND_FLAT;
+    }
+    function colorFor(rate) {
+      if (rate > 0) return UP;
+      if (rate < 0) return DOWN;
+      return '#94a3b8';
+    }
+    function recoColor(action) {
+      if (action === 'buy') return '#22c55e';
+      if (action === 'sell') return '#ef4444';
+      return '#94a3b8';
+    }
+
+    // ---------- 포맷 헬퍼 ----------
+    function formatKRW(n) {
+      if (n == null || isNaN(n)) return '-';
+      if (n >= 100) return Math.round(n).toLocaleString('ko-KR');
+      return n.toLocaleString('ko-KR', { maximumFractionDigits: n >= 1 ? 2 : 6 });
+    }
+    function formatPct(rate) {
+      if (rate == null || isNaN(rate)) return '-';
+      const v = rate * 100;
+      return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+    }
+    function formatVolume(v) {
+      if (v == null || isNaN(v)) return '-';
+      if (v >= 1e12) return (v / 1e12).toFixed(2) + '조';
+      if (v >= 1e8) return Math.round(v / 1e8).toLocaleString('ko-KR') + '억';
+      if (v >= 1e4) return Math.round(v / 1e4).toLocaleString('ko-KR') + '만';
+      return Math.round(v).toLocaleString('ko-KR');
+    }
+
+    // ---------- 관심코인 (localStorage) ----------
+    function useWatchlist() {
+      const [list, setList] = useState(() => {
+        try {
+          const s = localStorage.getItem(WATCH_KEY);
+          if (s) {
+            const arr = JSON.parse(s);
+            if (Array.isArray(arr)) return arr;
+          }
+        } catch (_e) { /* 무시 */ }
+        return DEFAULT_WATCH;
+      });
+
+      useEffect(() => {
+        try { localStorage.setItem(WATCH_KEY, JSON.stringify(list)); } catch (_e) { /* 무시 */ }
+      }, [list]);
+
+      const add = useCallback((coin) => {
+        setList((prev) =>
+          prev.some((x) => x.id === coin.id)
+            ? prev
+            : [...prev, { id: coin.id, symbol: coin.symbol, name: coin.name }]
+        );
+      }, []);
+      const remove = useCallback((id) => {
+        setList((prev) => prev.filter((x) => x.id !== id));
+      }, []);
+      const has = useCallback((id) => list.some((x) => x.id === id), [list]);
+
+      return { list, add, remove, has };
+    }
+
+    // ---------- 시세 데이터 훅 (CoinGecko 프록시) ----------
+    function useMarkets(params, intervalMs, live, enabled) {
+      const [coins, setCoins] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [updatedAt, setUpdatedAt] = useState(null);
+      const prevPrices = useRef({});
+
+      const refresh = useCallback(async () => {
+        if (params == null) return;
+        try {
+          const res = await fetch(`${API_BASE_URL}/markets?${params}`);
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.error || '시세 조회에 실패했습니다.');
+          }
+          const json = await res.json();
+          const enriched = (json.coins || []).map((c) => {
+            const prev = prevPrices.current[c.id];
+            let tick = 0;
+            if (prev != null && c.trade_price > prev) tick = 1;
+            else if (prev != null && c.trade_price < prev) tick = -1;
+            prevPrices.current[c.id] = c.trade_price;
+            return { ...c, tick };
+          });
+          setCoins(enriched);
+          setUpdatedAt(new Date());
+          setError('');
+        } catch (e) {
+          setError(e.message || '데이터를 불러오지 못했습니다.');
+        } finally {
+          setLoading(false);
+        }
+      }, [params]);
+
+      useEffect(() => {
+        if (enabled) refresh();
+      }, [enabled, refresh]);
+
+      useEffect(() => {
+        if (!enabled || !live) return;
+        const id = setInterval(refresh, intervalMs);
+        return () => clearInterval(id);
+      }, [enabled, live, intervalMs, refresh]);
+
+      return { coins, loading, error, updatedAt, refresh };
+    }
+
+    // ---------- 작은 컴포넌트 ----------
+
+    // 종가 배열로 그리는 미니 스파크라인 (SVG)
+    function Sparkline({ data, color, id, width = 220, height = 44 }) {
+      if (!data || data.length < 2) {
+        return <div style={{ height }} className="w-full" />;
+      }
+      const min = Math.min(...data);
+      const max = Math.max(...data);
+      const span = max - min || 1;
+      const stepX = width / (data.length - 1);
+      const points = data.map((v, i) => {
+        const x = i * stepX;
+        const y = height - ((v - min) / span) * (height - 6) - 3;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      });
+      const areaPath =
+        `M0,${height} ` + points.map((p) => 'L' + p).join(' ') + ` L${width},${height} Z`;
+      const gradId = 'spark-' + (id || (min + '-' + max)).replace(/[^a-zA-Z0-9_-]/g, '');
+      return (
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full" style={{ height }} preserveAspectRatio="none">
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <path d={areaPath} fill={`url(#${gradId})`} />
+          <polyline
+            points={points.join(' ')}
+            fill="none"
+            stroke={color}
+            strokeWidth="2"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </svg>
+      );
+    }
+
+    function StatCard({ label, value, sub, accent }) {
+      return (
+        <div className="rounded-2xl bg-slate-800/40 border border-slate-700/50 px-5 py-4 backdrop-blur">
+          <div className="text-xs text-slate-400 mb-1">{label}</div>
+          <div className="text-2xl font-bold" style={{ color: accent || '#e2e8f0' }}>{value}</div>
+          {sub && <div className="text-xs text-slate-500 mt-1 truncate">{sub}</div>}
+        </div>
+      );
+    }
+
+    function ChangeBar({ rate }) {
+      const pct = Math.max(-10, Math.min(10, rate * 100));
+      const widthPct = Math.min(50, Math.abs(pct) / 10 * 50);
+      const color = colorFor(rate);
+      return (
+        <div className="relative h-1.5 w-full rounded-full bg-slate-700/40 overflow-hidden">
+          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-slate-500/40" />
+          <div
+            className="absolute top-0 bottom-0 rounded-full transition-all duration-500"
+            style={{ backgroundColor: color, width: widthPct + '%', left: rate >= 0 ? '50%' : (50 - widthPct) + '%' }}
+          />
+        </div>
+      );
+    }
+
+    // 관심코인 추세 카드: 1시간 추세색 + 거래량 급변 ⚡ + 삭제 × + 클릭 시 4h 분석
+    function CoinCard({ c, onRemove, onSelect }) {
+      const tColor = trendColor(c.trend);
+      const arrow = c.trend === 'up' ? '▲' : c.trend === 'down' ? '▼' : '–';
+      const trendLabel = c.trend === 'up' ? '상승추세' : c.trend === 'down' ? '하락추세' : '보합';
+      const turnoverPct = Math.round((c.turnover || 0) * 100);
+
+      return (
+        <div
+          onClick={() => onSelect(c)}
+          title="클릭하면 4시간봉 매물대·추천 포지션 분석"
+          className={`relative enter card-hover cursor-pointer rounded-2xl border bg-slate-800/40 backdrop-blur px-4 py-3 overflow-hidden ${c.spike ? 'spike-card' : ''}`}
+          style={{
+            borderColor: c.spike ? 'transparent' : tColor + '88',
+            background: `linear-gradient(180deg, ${tColor}14 0%, rgba(30,41,59,0.35) 60%)`,
+          }}
+        >
+          {/* 우측 상단: ⚡ 급변 배지 + 삭제 버튼 */}
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+            {c.spike && (
+              <div
+                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-yellow-400/20 border border-yellow-400/60"
+                title={`강한 거래량·변동성 감지 (회전율 ${turnoverPct}%)`}
+              >
+                <span className="bolt text-yellow-300 text-sm leading-none">⚡</span>
+                <span className="text-[10px] font-bold text-yellow-300 leading-none">{turnoverPct}%</span>
+              </div>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onRemove(c.id); }}
+              title="관심코인에서 삭제"
+              className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-rose-300 hover:bg-rose-500/15 transition leading-none"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 상단: 로고 + 이름 */}
+          <div className="flex items-center gap-2 mb-1 pr-14">
+            {c.image && <img src={c.image} alt="" className="w-6 h-6 rounded-full" />}
+            <div className="min-w-0">
+              <div className="font-bold text-slate-100 truncate">{c.name}</div>
+              <div className="text-[11px] text-slate-500">{c.symbol}</div>
+            </div>
+          </div>
+
+          {/* 현재가 */}
+          <div className="flex items-baseline gap-2">
+            <span className="text-lg font-extrabold tabular-nums" style={{ color: tColor }}>
+              {formatKRW(c.trade_price)}
+            </span>
+            <span className="text-[11px] text-slate-500">원</span>
+          </div>
+
+          {/* 추세(1h) + 24h 등락률 */}
+          <div className="flex items-center justify-between mt-0.5 mb-1.5">
+            <span
+              className="inline-flex items-center gap-1 text-xs font-semibold px-1.5 py-0.5 rounded"
+              style={{ color: tColor, backgroundColor: tColor + '1f' }}
+            >
+              {arrow} {trendLabel}
+              <span className="opacity-70">{formatPct(c.trendRate)}</span>
+            </span>
+            <span className="text-xs tabular-nums" style={{ color: colorFor(c.signed_change_rate) }}>
+              24h {formatPct(c.signed_change_rate)}
+            </span>
+          </div>
+
+          {/* 최근 24시간 스파크라인 */}
+          <Sparkline data={c.closes} color={tColor} id={c.id} />
+
+          {/* 하단: 거래대금 + 분석 진입 힌트 */}
+          <div className="flex items-center justify-between mt-1 text-[11px] text-slate-500">
+            <span>거래대금 {formatVolume(c.acc_trade_price_24h)}</span>
+            <span className="text-emerald-400/80">4h 분석 ›</span>
+          </div>
+        </div>
+      );
+    }
+
+    // 추천 포지션 배지
+    function RecoBadge({ action }) {
+      const map = {
+        buy: { label: '매수 · BUY', icon: '🟢' },
+        sell: { label: '매도 · SELL', icon: '🔴' },
+        hold: { label: '관망 · HOLD', icon: '⚪' },
+      };
+      const m = map[action] || map.hold;
+      const col = recoColor(action);
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-bold text-sm"
+          style={{ color: col, backgroundColor: col + '22', borderColor: col + '66' }}
+        >
+          {m.icon} {m.label}
+        </span>
+      );
+    }
+
+    // 카드 클릭 시: 4시간봉 매물대 + 추천 포지션 모달
+    function CoinDetail({ coin, onClose }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        let alive = true;
+        setLoading(true); setError(''); setData(null);
+        (async () => {
+          try {
+            const res = await fetch(`${API_BASE_URL}/analysis?id=${encodeURIComponent(coin.id)}`);
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || '분석에 실패했습니다.');
+            if (alive) setData(json);
+          } catch (e) {
+            if (alive) setError(e.message || '분석에 실패했습니다.');
+          } finally {
+            if (alive) setLoading(false);
+          }
+        })();
+        return () => { alive = false; };
+      }, [coin.id]);
+
+      // Esc 로 닫기
+      useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+      }, [onClose]);
+
+      const range = data ? (data.priceMax - data.priceMin) || 1 : 1;
+      const yOf = (p) => ((data.priceMax - p) / range) * 100;
+
+      return (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={onClose}
+        >
+          <div
+            className="enter w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900/95 shadow-2xl max-h-[90vh] overflow-y-auto scroll"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 헤더 */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-700/60 sticky top-0 bg-slate-900/95 backdrop-blur z-10">
+              {coin.image && <img src={coin.image} alt="" className="w-8 h-8 rounded-full" />}
+              <div className="min-w-0 flex-1">
+                <div className="font-bold text-slate-100 truncate">
+                  {coin.name} <span className="text-slate-500 text-sm">{coin.symbol}</span>
+                </div>
+                <div className="text-xs text-slate-500">4시간봉 · 최근 14일 분석</div>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-700/50 transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5">
+              {loading ? (
+                <div className="py-16 text-center text-slate-400 animate-pulse">분석 데이터를 불러오는 중…</div>
+              ) : error ? (
+                <div className="py-12 text-center text-rose-300 text-sm">⚠️ {error}</div>
+              ) : (
+                <React.Fragment>
+                  {/* 추천 포지션 */}
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-4 mb-4">
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <RecoBadge action={data.recommendation.action} />
+                      <div className="text-right">
+                        <div className="text-[11px] text-slate-500">4시간봉 추세</div>
+                        <div className="font-semibold" style={{ color: recoColor(data.recommendation.action) }}>
+                          {data.recommendation.trend}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs text-slate-500 shrink-0">신뢰도</span>
+                      <div className="flex-1 h-1.5 rounded-full bg-slate-700/50 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: (data.recommendation.confidence * 100) + '%', background: recoColor(data.recommendation.action) }}
+                        />
+                      </div>
+                      <span className="text-xs tabular-nums text-slate-400 shrink-0">
+                        {Math.round(data.recommendation.confidence * 100)}%
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-300 leading-relaxed">{data.recommendation.reason}</p>
+                  </div>
+
+                  {/* 🤖 AI 트레이더 코멘트 */}
+                  <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4 mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-base">🤖</span>
+                      <span className="text-xs font-semibold tracking-wide text-indigo-300">AI 트레이더 코멘트</span>
+                    </div>
+                    {data.aiComment && data.aiComment.trim() ? (
+                      <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-line">{data.aiComment}</p>
+                    ) : (
+                      <p className="text-sm italic text-slate-500">AI 코멘트 없음</p>
+                    )}
+                  </div>
+
+                  {/* 현재가 + 가까운 지지/저항 */}
+                  <div className="flex items-center justify-between mb-3 text-sm flex-wrap gap-2">
+                    <span className="text-slate-400">현재가 <b className="text-slate-100">₩{formatKRW(data.currentPrice)}</b></span>
+                    <div className="flex gap-2">
+                      {data.nearestSupport && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-xs">
+                          지지 ₩{formatKRW(data.nearestSupport.mid)}
+                        </span>
+                      )}
+                      {data.nearestResistance && (
+                        <span className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 text-xs">
+                          저항 ₩{formatKRW(data.nearestResistance.mid)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 주요 매물대 프로파일 */}
+                  <div className="text-xs text-slate-500 mb-2">주요 매물대 (4시간봉 가격 분포)</div>
+                  <div className="relative rounded-xl border border-slate-700/50 bg-slate-950/40" style={{ height: 280 }}>
+                    {data.zones.map((z, idx) => {
+                      const top = yOf(z.high);
+                      const h = Math.max(3, ((z.high - z.low) / range) * 100);
+                      const isRes = z.role === 'resistance';
+                      const col = isRes ? '#ef4444' : '#22c55e';
+                      return (
+                        <div key={idx} className="absolute left-2 right-2" style={{ top: top + '%', height: h + '%' }}>
+                          <div
+                            className="relative h-full rounded flex items-center"
+                            style={{
+                              width: (30 + z.strength * 70) + '%',
+                              background: col + '33',
+                              borderLeft: `3px solid ${col}`,
+                              boxShadow: z.isPOC ? `0 0 0 1px ${col}aa` : 'none',
+                            }}
+                          >
+                            <span className="pl-2 text-[10px] font-semibold whitespace-nowrap" style={{ color: col }}>
+                              {isRes ? '저항' : '지지'} ₩{formatKRW(z.mid)}{z.isPOC ? ' · POC' : ''}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* 현재가 라인 */}
+                    <div className="absolute left-0 right-0 flex items-center pointer-events-none" style={{ top: yOf(data.currentPrice) + '%' }}>
+                      <div className="flex-1 border-t border-dashed border-slate-300/70" />
+                      <span className="text-[10px] bg-slate-200 text-slate-900 px-1 rounded mr-1 font-bold whitespace-nowrap">
+                        현재가 ₩{formatKRW(data.currentPrice)}
+                      </span>
+                    </div>
+                    <span className="absolute right-2 top-1 text-[10px] text-slate-600">₩{formatKRW(data.priceMax)}</span>
+                    <span className="absolute right-2 bottom-1 text-[10px] text-slate-600">₩{formatKRW(data.priceMin)}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">
+                    * 매물대는 4시간봉 14일 가격 분포(마켓 프로파일)로 추정한 지지·저항 구간입니다. 막대가 길수록 매물 밀집(강한 구간)이며, POC는 최대 밀집 가격대입니다. 투자 판단의 참고용입니다.
+                  </p>
+                </React.Fragment>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 전체 시세 리스트 행 + 관심 추가/삭제 토글
+    function CoinRow({ c, rank, inWatch, onToggle }) {
+      const color = colorFor(c.signed_change_rate);
+      const flashClass = c.tick > 0 ? 'flash-up' : c.tick < 0 ? 'flash-down' : '';
+      return (
+        <div
+          className={`grid grid-cols-12 items-center gap-2 px-3 py-3 rounded-xl border border-transparent hover:border-slate-600/50 hover:bg-slate-700/20 transition ${flashClass}`}
+        >
+          {/* 관심 토글 + 순위 + 이름 */}
+          <div className="col-span-5 flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => onToggle(c)}
+              title={inWatch ? '관심코인에서 삭제' : '관심코인에 추가'}
+              className={`w-7 h-7 shrink-0 rounded-md flex items-center justify-center transition ${
+                inWatch ? 'text-yellow-300 hover:bg-yellow-400/15' : 'text-slate-500 hover:text-slate-200 hover:bg-slate-600/30'
+              }`}
+            >
+              {inWatch ? '★' : '☆'}
+            </button>
+            <span className="text-xs text-slate-500 w-6 text-right tabular-nums">{rank}</span>
+            {c.image && <img src={c.image} alt="" className="w-6 h-6 rounded-full shrink-0" />}
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-100 truncate">{c.name}</div>
+              <div className="text-xs text-slate-500">{c.symbol}</div>
+            </div>
+          </div>
+
+          {/* 현재가 */}
+          <div className="col-span-3 text-right">
+            <div className="font-bold tabular-nums" style={{ color }}>{formatKRW(c.trade_price)}</div>
+            <div className="text-[11px] text-slate-500 tabular-nums">
+              {c.signed_change_price >= 0 ? '+' : ''}{formatKRW(c.signed_change_price)}
+            </div>
+          </div>
+
+          {/* 등락률 24h */}
+          <div className="col-span-2">
+            <div className="text-right font-semibold tabular-nums mb-1" style={{ color }}>
+              {formatPct(c.signed_change_rate)}
+            </div>
+            <ChangeBar rate={c.signed_change_rate} />
+          </div>
+
+          {/* 거래대금 */}
+          <div className="col-span-2 text-right">
+            <div className="text-sm text-slate-300 tabular-nums">{formatVolume(c.acc_trade_price_24h)}</div>
+            <div className="text-[11px] text-slate-500">거래대금</div>
+          </div>
+        </div>
+      );
+    }
+
+    // 코인 검색 → 관심코인 추가
+    function CoinSearch({ onAdd, onRemove, has }) {
+      const [q, setQ] = useState('');
+      const [results, setResults] = useState([]);
+      const [open, setOpen] = useState(false);
+      const [loading, setLoading] = useState(false);
+      const [err, setErr] = useState('');
+      const timer = useRef(null);
+      const boxRef = useRef(null);
+
+      useEffect(() => {
+        if (timer.current) clearTimeout(timer.current);
+        const term = q.trim();
+        if (term.length < 1) { setResults([]); setOpen(false); setErr(''); return; }
+        timer.current = setTimeout(async () => {
+          setLoading(true);
+          setErr('');
+          try {
+            const res = await fetch(`${API_BASE_URL}/search?query=${encodeURIComponent(term)}`);
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || '검색 실패');
+            setResults(json.coins || []);
+            setOpen(true);
+          } catch (e) {
+            setErr(e.message || '검색에 실패했습니다.');
+            setResults([]);
+            setOpen(true);
+          } finally {
+            setLoading(false);
+          }
+        }, 400);
+        return () => { if (timer.current) clearTimeout(timer.current); };
+      }, [q]);
+
+      // 바깥 클릭 시 닫기
+      useEffect(() => {
+        function onDoc(e) {
+          if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+        }
+        document.addEventListener('mousedown', onDoc);
+        return () => document.removeEventListener('mousedown', onDoc);
+      }, []);
+
+      return (
+        <div className="relative" ref={boxRef}>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onFocus={() => { if (results.length || err) setOpen(true); }}
+              placeholder="코인 이름/티커로 검색해서 관심코인 추가 (예: bitcoin, PEPE, 솔라나)"
+              className="w-full bg-slate-800/50 border border-slate-700 rounded-xl pl-9 pr-9 py-2.5 text-sm placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+            />
+            {loading && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs animate-pulse">…</span>
+            )}
+          </div>
+
+          {open && (
+            <div className="scroll absolute z-20 mt-2 w-full max-h-80 overflow-y-auto rounded-xl border border-slate-700 bg-slate-900/95 backdrop-blur shadow-2xl">
+              {err ? (
+                <div className="px-4 py-3 text-sm text-rose-300">⚠️ {err}</div>
+              ) : results.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-slate-500">{loading ? '검색 중…' : '검색 결과가 없습니다.'}</div>
+              ) : (
+                results.map((r) => {
+                  const added = has(r.id);
+                  return (
+                    <div key={r.id} className="flex items-center gap-3 px-3 py-2 hover:bg-slate-700/30">
+                      {r.thumb
+                        ? <img src={r.thumb} alt="" className="w-6 h-6 rounded-full" />
+                        : <div className="w-6 h-6 rounded-full bg-slate-700" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-slate-100 truncate">
+                          {r.name} <span className="text-slate-500">{r.symbol}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {r.rank ? `시총 순위 #${r.rank}` : '순위 정보 없음'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => (added ? onRemove(r.id) : onAdd(r))}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-lg border transition ${
+                          added
+                            ? 'border-yellow-400/50 text-yellow-300 bg-yellow-400/10'
+                            : 'border-emerald-500/50 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20'
+                        }`}
+                      >
+                        {added ? '★ 추가됨' : '+ 추가'}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function CardSkeleton() {
+      return <div className="h-44 rounded-2xl shimmer bg-slate-800/40" style={{ background: 'rgba(148,163,184,0.06)' }} />;
+    }
+
+    // ---------- 메인 앱 ----------
+    function App() {
+      const [view, setView] = useState('watch'); // watch | all
+      const [live, setLive] = useState(true);
+      const [intervalMs, setIntervalMs] = useState(30000);
+      const [query, setQuery] = useState('');
+      const [sortKey, setSortKey] = useState('marketcap'); // marketcap | changeDesc | changeAsc | price
+      const [selected, setSelected] = useState(null); // 상세 분석 모달 대상 코인
+      const { list: watchlist, add, remove, has } = useWatchlist();
+
+      const watchIds = watchlist.map((w) => w.id).join(',');
+      const watchMarkets = useMarkets(
+        view === 'watch' ? `ids=${watchIds}` : null, intervalMs, live, view === 'watch'
+      );
+      const allMarkets = useMarkets(
+        view === 'all' ? 'top=100' : null, intervalMs, live, view === 'all'
+      );
+      const active = view === 'watch' ? watchMarkets : allMarkets;
+
+      const toggleWatch = useCallback(
+        (c) => (has(c.id) ? remove(c.id) : add(c)),
+        [has, remove, add]
+      );
+
+      const stats = useMemo(() => {
+        const coins = active.coins;
+        let up = 0, down = 0, spike = 0;
+        for (const c of coins) {
+          if (c.trend === 'up') up++;
+          else if (c.trend === 'down') down++;
+          if (c.spike) spike++;
+        }
+        const topGainer = [...coins].sort((a, b) => b.signed_change_rate - a.signed_change_rate)[0];
+        return { up, down, spike, total: coins.length, topGainer };
+      }, [active.coins]);
+
+      // 리스트(전체) 뷰: 검색/정렬 적용
+      const listVisible = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        let list = active.coins.filter((c) =>
+          !q || (c.name || '').toLowerCase().includes(q) || (c.symbol || '').toLowerCase().includes(q)
+        );
+        list = [...list].sort((a, b) => {
+          if (sortKey === 'changeDesc') return b.signed_change_rate - a.signed_change_rate;
+          if (sortKey === 'changeAsc') return a.signed_change_rate - b.signed_change_rate;
+          if (sortKey === 'price') return b.trade_price - a.trade_price;
+          return (b.market_cap || 0) - (a.market_cap || 0); // marketcap
+        });
+        return list;
+      }, [active.coins, query, sortKey]);
+
+      const sortBtns = [
+        { key: 'marketcap', label: '시총' },
+        { key: 'changeDesc', label: '상승률↑' },
+        { key: 'changeAsc', label: '하락률↑' },
+        { key: 'price', label: '가격' },
+      ];
+
+      return (
+        <div className="max-w-5xl mx-auto px-4 py-6 sm:py-8">
+          {/* 헤더 */}
+          <header className="mb-6">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2">
+                  <span>📈</span> CoinDash
+                  <span className="text-sm font-normal text-slate-400">실시간 코인 대시보드</span>
+                </h1>
+                <p className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                  데이터: CoinGecko · 원화(KRW) 기준
+                  {live && (
+                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                      <span className="live-dot inline-block w-2 h-2 rounded-full bg-emerald-400" />
+                      LIVE
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-800/40 rounded-lg p-1 border border-slate-700/50">
+                  <button
+                    onClick={() => setView('watch')}
+                    className={`px-2.5 py-1 rounded-md text-sm font-medium transition ${
+                      view === 'watch' ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ⭐ 관심코인
+                  </button>
+                  <button
+                    onClick={() => setView('all')}
+                    className={`px-2.5 py-1 rounded-md text-sm font-medium transition ${
+                      view === 'all' ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ☰ 전체 시세
+                  </button>
+                </div>
+                <select
+                  value={intervalMs}
+                  onChange={(e) => setIntervalMs(Number(e.target.value))}
+                  className="bg-slate-800/60 border border-slate-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-emerald-500"
+                  title="자동 갱신 주기 (CoinGecko 무료 한도 고려)"
+                >
+                  <option value={15000}>15초</option>
+                  <option value={30000}>30초</option>
+                  <option value={60000}>60초</option>
+                </select>
+                <button
+                  onClick={() => setLive((v) => !v)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                    live ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300' : 'bg-slate-800/60 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  {live ? '⏸ 자동' : '▶ 수동'}
+                </button>
+                <button
+                  onClick={active.refresh}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-800/60 border border-slate-700 text-slate-200 hover:border-slate-500 transition"
+                  title="지금 새로고침"
+                >
+                  ↻
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* 요약 카드 */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <StatCard label={view === 'watch' ? '관심코인' : '표시 종목'} value={stats.total || '–'} sub={view === 'watch' ? '내 워치리스트' : 'CoinGecko 상위'} />
+            <StatCard label="상승추세" value={stats.up} accent={TREND_UP} sub="1시간 기준" />
+            <StatCard label="하락추세" value={stats.down} accent={TREND_DOWN} sub="1시간 기준" />
+            <StatCard label="거래량 급변 ⚡" value={stats.spike} accent={SPIKE_YELLOW} sub="강한 거래·변동성" />
+          </div>
+
+          {/* 검색 (항상 노출 — 어느 뷰에서든 관심코인 추가 가능) */}
+          <div className="mb-4">
+            <CoinSearch onAdd={add} onRemove={remove} has={has} />
+          </div>
+
+          {/* 에러 배너 */}
+          {active.error && (
+            <div className="mb-3 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-300 px-4 py-3 text-sm">
+              ⚠️ {active.error}
+            </div>
+          )}
+
+          {view === 'watch' ? (
+            <React.Fragment>
+              {/* 범례 */}
+              <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 mb-3">
+                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: TREND_UP }} /> 상승추세</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: TREND_DOWN }} /> 하락추세</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: TREND_FLAT }} /> 보합</span>
+                <span className="inline-flex items-center gap-1"><span className="text-yellow-300">⚡</span> 거래량 급변(변동성)</span>
+                <span className="ml-auto text-slate-500">카드색 = 1시간 추세 · ✕ 로 삭제</span>
+              </div>
+
+              {/* 관심코인 카드 그리드 */}
+              {watchlist.length === 0 ? (
+                <div className="text-center text-slate-400 py-16 rounded-2xl border border-dashed border-slate-700">
+                  <div className="text-3xl mb-2">⭐</div>
+                  <div className="font-semibold text-slate-300">관심코인이 비어 있습니다</div>
+                  <div className="text-sm text-slate-500 mt-1">위 검색창에서 코인 이름이나 티커를 검색해 추가해 보세요.</div>
+                </div>
+              ) : active.loading && active.coins.length === 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {Array.from({ length: Math.min(8, watchlist.length) }).map((_, i) => <CardSkeleton key={i} />)}
+                </div>
+              ) : (
+                <div className="scroll grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[64vh] overflow-y-auto pr-1 pb-2">
+                  {active.coins.map((c) => <CoinCard key={c.id} c={c} onRemove={remove} onSelect={setSelected} />)}
+                </div>
+              )}
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              {/* 전체 시세: 필터 + 정렬 */}
+              <div className="flex items-center gap-3 mb-3 flex-wrap">
+                <div className="relative flex-1 min-w-[180px]">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔎</span>
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="목록 내 필터 (이름/티커)"
+                    className="w-full bg-slate-800/50 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-sm placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1 bg-slate-800/40 rounded-xl p-1 border border-slate-700/50">
+                  {sortBtns.map((b) => (
+                    <button
+                      key={b.key}
+                      onClick={() => setSortKey(b.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                        sortKey === b.key ? 'bg-emerald-500/20 text-emerald-300' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 테이블 헤더 */}
+              <div className="grid grid-cols-12 gap-2 px-3 pb-2 text-xs text-slate-500 border-b border-slate-700/50">
+                <div className="col-span-5">종목 (★ 관심 추가)</div>
+                <div className="col-span-3 text-right">현재가</div>
+                <div className="col-span-2 text-right">등락률(24h)</div>
+                <div className="col-span-2 text-right">거래대금</div>
+              </div>
+
+              {/* 리스트 */}
+              <div className="scroll mt-2 space-y-1 max-h-[60vh] overflow-y-auto pr-1">
+                {active.loading && active.coins.length === 0 ? (
+                  <div className="text-center text-slate-500 py-12 text-sm">불러오는 중…</div>
+                ) : listVisible.length === 0 ? (
+                  <div className="text-center text-slate-500 py-12 text-sm">결과가 없습니다.</div>
+                ) : (
+                  listVisible.map((c, i) => (
+                    <CoinRow key={c.id} c={c} rank={i + 1} inWatch={has(c.id)} onToggle={toggleWatch} />
+                  ))
+                )}
+              </div>
+            </React.Fragment>
+          )}
+
+          {/* 푸터 */}
+          <footer className="mt-5 flex items-center justify-between text-xs text-slate-500">
+            <span>
+              {active.updatedAt
+                ? `마지막 갱신: ${active.updatedAt.toLocaleTimeString('ko-KR', { hour12: false })}`
+                : '불러오는 중…'}
+            </span>
+            <span>
+              {view === 'watch'
+                ? `관심코인 ${watchlist.length}종목`
+                : `표시 ${listVisible.length} / ${stats.total}`}
+            </span>
+          </footer>
+
+          {/* 4시간봉 매물대·추천 포지션 상세 모달 */}
+          {selected && <CoinDetail coin={selected} onClose={() => setSelected(null)} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

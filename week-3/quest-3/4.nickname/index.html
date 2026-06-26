@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>✨ 별명 생성기</title>
+
+  <!-- ⚠️ CDN 버전 고정: Babel 은 7.x 로 고정해야 type="text/babel" 인라인 변환이 깨지지 않는다. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(168,85,247,0.35), transparent 60%),
+        radial-gradient(1000px 500px at 0% 110%, rgba(56,189,248,0.30), transparent 60%),
+        linear-gradient(160deg, #0f0a1e 0%, #1a1033 55%, #0d1226 100%);
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    }
+    /* 떠다니는 별 장식 */
+    @keyframes floaty {
+      0%, 100% { transform: translateY(0) rotate(0deg); opacity: .6; }
+      50% { transform: translateY(-14px) rotate(8deg); opacity: 1; }
+    }
+    .floaty { animation: floaty 6s ease-in-out infinite; }
+    @keyframes pop {
+      0% { transform: scale(.85); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .pop { animation: pop .35s cubic-bezier(.2,.9,.3,1.4) both; }
+    .glass {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(10px);
+    }
+    .card-grad-0 { background: linear-gradient(135deg, rgba(168,85,247,.22), rgba(99,102,241,.12)); }
+    .card-grad-1 { background: linear-gradient(135deg, rgba(236,72,153,.22), rgba(244,114,182,.10)); }
+    .card-grad-2 { background: linear-gradient(135deg, rgba(56,189,248,.22), rgba(45,212,191,.12)); }
+    .card-grad-3 { background: linear-gradient(135deg, rgba(251,191,36,.20), rgba(249,115,22,.12)); }
+    /* 스크롤바 */
+    ::-webkit-scrollbar { width: 10px; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 99px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    // 카드별 그라데이션 클래스 순환
+    const GRAD = ['card-grad-0', 'card-grad-1', 'card-grad-2', 'card-grad-3'];
+
+    // 별명 스타일(테마) — key 는 서버의 STYLE_GUIDE 와 일치해야 한다.
+    const STYLES = [
+      { key: 'free', label: '자유', icon: '🎲' },
+      { key: 'game', label: '게임 캐릭터', icon: '🎮' },
+      { key: 'animal', label: '동물', icon: '🐾' },
+      { key: 'english', label: '영어권 이름', icon: '🌎' },
+      { key: 'food', label: '음식', icon: '🍰' },
+      { key: 'fantasy', label: '판타지 칭호', icon: '🗡️' },
+    ];
+
+    function Field({ label, icon, ...props }) {
+      return (
+        <label className="block">
+          <span className="text-sm font-semibold text-purple-100/90 flex items-center gap-1.5 mb-1.5">
+            <span>{icon}</span>{label}
+          </span>
+          <input
+            {...props}
+            className="w-full rounded-xl bg-white/10 border border-white/15 px-4 py-2.5 text-white
+                       placeholder-white/35 outline-none transition
+                       focus:border-purple-300/70 focus:ring-2 focus:ring-purple-400/30"
+          />
+        </label>
+      );
+    }
+
+    function NicknameCard({ item, index, onCopy, copied }) {
+      return (
+        <div className={`pop glass ${GRAD[index % GRAD.length]} rounded-2xl p-4 flex flex-col gap-2 shadow-lg`}>
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="text-xl font-extrabold text-white leading-snug break-keep">
+              {item.nickname}
+            </h3>
+            <button
+              onClick={() => onCopy(item.nickname)}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold transition active:scale-95
+                ${copied
+                  ? 'bg-emerald-400 text-emerald-950'
+                  : 'bg-white/15 text-white hover:bg-white/25'}`}
+            >
+              {copied ? '✓ 복사됨' : '복사'}
+            </button>
+          </div>
+          {item.reason && (
+            <p className="text-sm text-purple-50/80 leading-relaxed break-keep">
+              {item.reason}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [form, setForm] = useState({ name: '', personality: '', hobby: '', extra: '' });
+      const [style, setStyle] = useState('free');
+      const [count, setCount] = useState(6);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+      const [results, setResults] = useState([]);
+      const [copiedIdx, setCopiedIdx] = useState(-1);
+      const copyTimer = useRef(null);
+
+      const update = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+      const generate = async () => {
+        setError('');
+        if (!form.name && !form.personality && !form.hobby && !form.extra) {
+          setError('이름·성격·취미 중 최소 한 가지는 입력해 주세요.');
+          return;
+        }
+        setLoading(true);
+        setResults([]);
+        try {
+          const res = await fetch('/api/nickname', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...form, style, count }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '요청에 실패했습니다.');
+          setResults(data.nicknames || []);
+        } catch (e) {
+          setError(e.message || '알 수 없는 오류가 발생했습니다.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const copy = async (text) => {
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch (_e) {
+          // clipboard API 미지원 시 폴백
+          const ta = document.createElement('textarea');
+          ta.value = text; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        }
+        const idx = results.findIndex((r) => r.nickname === text);
+        setCopiedIdx(idx);
+        clearTimeout(copyTimer.current);
+        copyTimer.current = setTimeout(() => setCopiedIdx(-1), 1500);
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) generate();
+      };
+
+      return (
+        <div className="min-h-screen px-4 py-10 sm:py-14 flex flex-col items-center">
+          {/* 헤더 */}
+          <header className="text-center mb-8 relative">
+            <div className="floaty absolute -top-6 -left-8 text-3xl select-none">⭐</div>
+            <div className="floaty absolute -top-2 -right-8 text-2xl select-none" style={{ animationDelay: '1.5s' }}>✨</div>
+            <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+              AI 별명 생성기
+            </h1>
+            <p className="mt-3 text-purple-100/75 text-sm sm:text-base">
+              이름·성격·취미를 알려주면 AI가 나만의 재미있는 별명을 지어드려요 🪄
+            </p>
+          </header>
+
+          {/* 입력 폼 */}
+          <section className="glass w-full max-w-2xl rounded-3xl p-6 sm:p-8 shadow-2xl" onKeyDown={onKeyDown}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="이름" icon="🙂" value={form.name} onChange={update('name')}
+                placeholder="예: 김민수" />
+              <Field label="성격" icon="💫" value={form.personality} onChange={update('personality')}
+                placeholder="예: 활발하고 장난기 많음" />
+              <Field label="취미" icon="🎯" value={form.hobby} onChange={update('hobby')}
+                placeholder="예: 등산, 게임, 베이킹" />
+              <Field label="기타 특징 (선택)" icon="📝" value={form.extra} onChange={update('extra')}
+                placeholder="예: 커피를 사랑함" />
+            </div>
+
+            {/* 스타일 선택 */}
+            <div className="mt-5">
+              <span className="text-sm font-semibold text-purple-100/90 flex items-center gap-1.5 mb-2">
+                <span>🎨</span>별명 스타일
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {STYLES.map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setStyle(s.key)}
+                    className={`rounded-full px-3.5 py-1.5 text-sm font-semibold border transition active:scale-95
+                      ${style === s.key
+                        ? 'bg-gradient-to-r from-fuchsia-500 to-indigo-500 text-white border-transparent shadow'
+                        : 'bg-white/8 text-purple-50/80 border-white/15 hover:bg-white/15'}`}
+                  >
+                    {s.icon} {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col sm:flex-row sm:items-center gap-4">
+              <label className="flex items-center gap-3 text-sm text-purple-100/85 flex-1">
+                <span className="font-semibold whitespace-nowrap">개수 {count}개</span>
+                <input
+                  type="range" min="3" max="12" value={count}
+                  onChange={(e) => setCount(Number(e.target.value))}
+                  className="w-full accent-purple-400 cursor-pointer"
+                />
+              </label>
+              <button
+                onClick={generate}
+                disabled={loading}
+                className="rounded-xl px-6 py-3 font-bold text-white shadow-lg transition
+                           bg-gradient-to-r from-fuchsia-500 to-indigo-500
+                           hover:from-fuchsia-400 hover:to-indigo-400 active:scale-95
+                           disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {loading ? (
+                  <>
+                    <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
+                    짓는 중…
+                  </>
+                ) : '✨ 별명 만들기'}
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-white/40">팁: Ctrl/⌘ + Enter 로도 생성할 수 있어요.</p>
+
+            {error && (
+              <div className="mt-4 rounded-xl bg-rose-500/15 border border-rose-400/30 text-rose-100 px-4 py-3 text-sm">
+                ⚠️ {error}
+              </div>
+            )}
+          </section>
+
+          {/* 결과 */}
+          {results.length > 0 && (
+            <section className="w-full max-w-2xl mt-8">
+              <h2 className="text-purple-100/80 text-sm font-semibold mb-3 px-1">
+                추천 별명 {results.length}개 · 마음에 드는 별명을 복사하세요
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {results.map((item, i) => (
+                  <NicknameCard
+                    key={i}
+                    item={item}
+                    index={i}
+                    copied={copiedIdx === i}
+                    onCopy={copy}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 로딩 스켈레톤 */}
+          {loading && results.length === 0 && (
+            <section className="w-full max-w-2xl mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {Array.from({ length: count }).map((_, i) => (
+                <div key={i} className="glass rounded-2xl p-4 h-24 animate-pulse"></div>
+              ))}
+            </section>
+          )}
+
+          <footer className="mt-12 text-white/30 text-xs">
+            Powered by Gemini · React + Tailwind
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

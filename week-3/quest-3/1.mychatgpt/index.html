@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🪙 그리즐납의 잡화점</title>
+
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. 미고정 시 @babel/standalone 이
+       최신(8.x)으로 올라가 type="text/babel" 인라인 변환이 통째로 깨진다.
+       Babel 은 반드시 7.x 로 고정. React/ReactDOM 도 정확히 핀. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    /* Tailwind 로 표현하기 어려운 것들만 커스텀 */
+
+    /* === 진짜 상점 같은 배경 === */
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #1c1208;
+    }
+
+    /* 1) 나무 판자 벽 */
+    .shop-wall {
+      position: fixed; inset: 0; z-index: -4;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          #4a3017 0px, #4a3017 84px,
+          #3a2412 84px, #3a2412 88px
+        ),
+        linear-gradient(180deg, #4d3219 0%, #2a1a0c 100%);
+    }
+    /* 나무 결 질감 */
+    .shop-wall::after {
+      content: ''; position: absolute; inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 2px,
+          transparent 2px, transparent 24px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px,
+          transparent 1px, transparent 10px
+        );
+      mix-blend-mode: overlay;
+    }
+
+    /* 2) 선반 + 진열된 물건들 */
+    .shop-shelves {
+      position: fixed; inset: 0; z-index: -3;
+      pointer-events: none; overflow: hidden;
+    }
+    .shelf {
+      position: absolute; left: -4%; right: -4%;
+      display: flex; align-items: flex-end; justify-content: space-around;
+      padding: 0 2%;
+      font-size: 40px; line-height: 1;
+      opacity: 0.9;
+      filter: drop-shadow(0 5px 4px rgba(0,0,0,0.55));
+    }
+    .shelf::after { /* 나무 선반 판 */
+      content: ''; position: absolute; left: 0; right: 0; bottom: -15px; height: 13px;
+      background: linear-gradient(180deg, #6e4524 0%, #3d2512 100%);
+      box-shadow: 0 9px 16px rgba(0,0,0,0.6);
+    }
+    .shelf-1 { top: 9%; }
+    .shelf-2 { top: 33%; }
+    .shelf-3 { top: 58%; }
+
+    /* 3) 따뜻한 등불 빛 */
+    .shop-glow {
+      position: fixed; inset: 0; z-index: -2; pointer-events: none;
+      background:
+        radial-gradient(60% 45% at 50% 0%, rgba(255,186,84,0.30), transparent 70%),
+        radial-gradient(40% 32% at 10% 18%, rgba(255,170,60,0.18), transparent 70%),
+        radial-gradient(40% 32% at 90% 18%, rgba(255,170,60,0.18), transparent 70%);
+      animation: lampFlicker 5s ease-in-out infinite alternate;
+    }
+    @keyframes lampFlicker {
+      0%   { opacity: 0.75; }
+      100% { opacity: 1; }
+    }
+    /* 4) 가장자리 비네팅으로 깊이감 */
+    .shop-vignette {
+      position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background: radial-gradient(ellipse at center, transparent 42%, rgba(0,0,0,0.6) 100%);
+    }
+
+    /* 메시지 등장 애니메이션 */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .msg-enter { animation: fadeInUp 0.35s ease-out both; }
+
+    /* 타이핑 점 애니메이션 */
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30%           { transform: translateY(-5px); opacity: 1; }
+    }
+    .typing-dot { animation: typingBounce 1.2s infinite ease-in-out; }
+    .typing-dot:nth-child(2) { animation-delay: 0.18s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.36s; }
+
+    /* 스크롤바 (따뜻한 톤) */
+    .chat-scroll::-webkit-scrollbar { width: 8px; }
+    .chat-scroll::-webkit-scrollbar-track { background: transparent; }
+    .chat-scroll::-webkit-scrollbar-thumb {
+      background: rgba(202, 138, 64, 0.4);
+      border-radius: 9999px;
+    }
+    .chat-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(202, 138, 64, 0.6);
+    }
+
+    /* textarea 리사이즈 제거 */
+    textarea { resize: none; }
+  </style>
+</head>
+<body>
+  <!-- 상점 배경: 나무 벽 + 진열 선반 + 등불 + 비네팅 -->
+  <div class="shop-wall"></div>
+  <div class="shop-shelves">
+    <div class="shelf shelf-1">🏺⚗️🧪📜🕯️💰🗝️🧴</div>
+    <div class="shelf shelf-2">📦🍶⚖️💎🔮🧶🥖🪔</div>
+    <div class="shelf shelf-3">👢🎒🗡️🛡️🧤📿🪙🍯</div>
+  </div>
+  <div class="shop-glow"></div>
+  <div class="shop-vignette"></div>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // 같은 출처(same-origin) API. localhost 하드코딩 금지.
+    const API_BASE_URL = '/api';
+
+    // 첫 진입 환영 인사 (프론트 표시 전용 — 서버로는 보내지 않음)
+    const WELCOME_MESSAGE =
+      '헤헤! 어서 오시오, 모험가 양반! 그리즐납의 잡화점에 잘 찾아왔소이다! 🪙\n' +
+      '필요한 게 뭐요? 입을 옷이든, 맛난 먹거리든, 얼굴에 바를 물약(화장품 말이오!)이든, 뭐든 말만 하시오! ' +
+      '이 몸이 세상천지 진짜배기 브랜드와 물건을 척척 골라드리리다. 헤헤헤!';
+
+    // 빠른 시작용 예시 질문
+    const QUICK_PROMPTS = [
+      '데일리로 입기 좋은 가성비 옷 추천해줘',
+      '건성 피부용 수분 크림 골라줘',
+      '혼자 먹기 좋은 야식 추천해줘',
+      '겨울 선물용 화장품 없을까?',
+    ];
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // 초록색 그린고블린 캐릭터 (직접 그린 SVG — 이모지 대신 사용해 플랫폼 무관 일관성 확보)
+    function GoblinFace({ className = '' }) {
+      return (
+        <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
+          {/* 귀 (뾰족) */}
+          <path d="M15 31 L1 21 Q10 31 18 31 Z" fill="#4e8a2c" />
+          <path d="M49 31 L63 21 Q54 31 46 31 Z" fill="#4e8a2c" />
+          {/* 머리 */}
+          <path d="M32 9 C19 9 13 19 14 31 C15 45 23 55 32 55 C41 55 49 45 50 31 C51 19 45 9 32 9 Z" fill="#6fae3a" />
+          {/* 턱/볼 음영 */}
+          <path d="M32 55 C25 55 20 48 17 39 C24 50 40 50 47 39 C44 48 39 55 32 55 Z" fill="#5c9730" />
+          {/* 눈썹 능선 */}
+          <path d="M16 27 Q24 22 31 27 L31 30 Q24 26 17 30 Z" fill="#4e8a2c" />
+          <path d="M48 27 Q40 22 33 27 L33 30 Q40 26 47 30 Z" fill="#4e8a2c" />
+          {/* 눈 (노란 눈, 장난기) */}
+          <ellipse cx="24" cy="31" rx="5.4" ry="4.1" fill="#fbe35a" />
+          <ellipse cx="40" cy="31" rx="5.4" ry="4.1" fill="#fbe35a" />
+          <circle cx="25.5" cy="31.5" r="2.1" fill="#1b1205" />
+          <circle cx="38.5" cy="31.5" r="2.1" fill="#1b1205" />
+          {/* 큰 매부리코 */}
+          <path d="M32 31 C29 37 27 41 30 44 C33 45 36 43 35 39 C34 36 34 33 33 31 Z" fill="#5c9730" />
+          {/* 능글맞은 입 */}
+          <path d="M21 45 Q32 54 43 45 Q32 50 21 45 Z" fill="#27160a" />
+          {/* 윗니 */}
+          <path d="M28 45.6 l1.6 2.2 1.6-2.2 Z" fill="#f3f3f3" />
+          <path d="M33 45.6 l1.6 2.2 1.6-2.2 Z" fill="#f3f3f3" />
+          {/* 아래 송곳니 */}
+          <path d="M26 46.4 l1.8 4 1.8-4 Z" fill="#ffffff" />
+          <path d="M34.4 46.4 l1.8 4 1.8-4 Z" fill="#ffffff" />
+        </svg>
+      );
+    }
+
+    // 고블린 아바타 (둥근 배경 + 그린고블린 얼굴)
+    function GoblinAvatar({ className = '' }) {
+      return (
+        <div className={`flex items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-lime-700/50 to-emerald-900/60 shadow-inner ring-1 ring-lime-400/25 ${className}`}>
+          <GoblinFace className="h-[82%] w-[82%]" />
+        </div>
+      );
+    }
+
+    // 채팅 말풍선
+    function ChatBubble({ role, content }) {
+      const isUser = role === 'user';
+      return (
+        <div
+          className={`msg-enter flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}
+        >
+          <div className={`flex max-w-[82%] sm:max-w-[70%] items-end gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+            {/* 아바타 (상인만) */}
+            {!isUser && <GoblinAvatar className="h-9 w-9 flex-shrink-0" />}
+            <div
+              className={[
+                'whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-[15px] leading-relaxed shadow-lg',
+                isUser
+                  ? 'rounded-br-md bg-gradient-to-br from-amber-500 to-orange-600 text-white'
+                  : 'rounded-bl-md bg-stone-800/85 text-amber-50 ring-1 ring-amber-400/15 backdrop-blur',
+              ].join(' ')}
+            >
+              {content}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 타이핑 인디케이터 (로딩)
+    function TypingIndicator() {
+      return (
+        <div className="msg-enter flex justify-start">
+          <div className="flex items-end gap-2">
+            <GoblinAvatar className="h-9 w-9 flex-shrink-0" />
+            <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-stone-800/85 px-5 py-4 ring-1 ring-amber-400/15 backdrop-blur">
+              <span className="typing-dot h-2 w-2 rounded-full bg-amber-300"></span>
+              <span className="typing-dot h-2 w-2 rounded-full bg-amber-300"></span>
+              <span className="typing-dot h-2 w-2 rounded-full bg-amber-300"></span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 에러 배너
+    function ErrorBanner({ message, onClose }) {
+      if (!message) return null;
+      return (
+        <div className="msg-enter mx-auto flex w-full max-w-3xl items-start gap-3 rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-3 text-sm text-rose-100 backdrop-blur">
+          <span className="text-lg leading-none">⚠️</span>
+          <p className="flex-1">{message}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="에러 닫기"
+            className="rounded-md px-2 text-rose-200 transition hover:bg-rose-500/20"
+          >
+            ✕
+          </button>
+        </div>
+      );
+    }
+
+    // 빠른 시작 칩
+    function QuickPrompts({ onPick, disabled }) {
+      return (
+        <div className="msg-enter flex flex-wrap justify-center gap-2 px-2 pt-1">
+          {QUICK_PROMPTS.map((q) => (
+            <button
+              key={q}
+              type="button"
+              disabled={disabled}
+              onClick={() => onPick(q)}
+              className="rounded-full border border-amber-400/25 bg-stone-800/60 px-3 py-1.5 text-xs text-amber-100 transition hover:border-amber-300/50 hover:bg-stone-700/70 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Layout Components
+    // ========================================
+
+    function Header() {
+      return (
+        <header className="flex flex-shrink-0 items-center gap-3 border-b border-amber-400/15 px-5 py-4 sm:px-7">
+          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-lime-700/50 to-emerald-900/60 ring-1 ring-amber-400/25">
+            <GoblinFace className="h-8 w-8" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold text-amber-50 sm:text-xl">
+              그리즐납의 잡화점
+            </h1>
+            <p className="truncate text-xs text-amber-200/60 sm:text-sm">
+              필요한 물건만 말하시오 — 브랜드와 제품을 척척 골라드리는 고블린 코디네이터 🪙
+            </p>
+          </div>
+        </header>
+      );
+    }
+
+    // ========================================
+    // 📄 Page Component — 채팅 화면
+    // ========================================
+
+    function ChatPage() {
+      const [messages, setMessages] = useState([
+        { role: 'assistant', content: WELCOME_MESSAGE, _welcome: true },
+      ]);
+      const [input, setInput] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const scrollRef = useRef(null);
+      const textareaRef = useRef(null);
+
+      // 새 메시지/로딩 변화 시 맨 아래로 자동 스크롤
+      useEffect(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      }, [messages, loading]);
+
+      // 첫 사용자 메시지 전 인지를 위해 빠른 시작 노출 여부
+      const showQuickPrompts = messages.every((m) => m.role !== 'user');
+
+      const send = useCallback(async (rawText) => {
+        const text = (rawText !== undefined ? rawText : input).trim();
+        if (!text || loading) return;
+
+        setError('');
+        const userMsg = { role: 'user', content: text };
+
+        // 화면 업데이트 (환영 인사 포함된 전체 목록)
+        const nextMessages = [...messages, userMsg];
+        setMessages(nextMessages);
+        setInput('');
+
+        // 서버로 보낼 기록: 환영 인사(_welcome) 제외 + role/content 만
+        const payloadMessages = nextMessages
+          .filter((m) => !m._welcome)
+          .map(({ role, content }) => ({ role, content }));
+
+        setLoading(true);
+        try {
+          const res = await fetch(`${API_BASE_URL}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: payloadMessages }),
+          });
+
+          let data = null;
+          try {
+            data = await res.json();
+          } catch (_) {
+            // JSON 파싱 실패
+          }
+
+          if (!res.ok || !data || typeof data.reply !== 'string') {
+            const serverMsg = data && data.error ? data.error : null;
+            throw new Error(
+              serverMsg ||
+                '이런! 가게 안쪽에서 물건 찾다가 자빠졌소. 잠시 후 다시 불러주시오!'
+            );
+          }
+
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: data.reply },
+          ]);
+        } catch (err) {
+          setError(
+            err.message ||
+              '헤헤, 잠시 정신이 나갔소. 잠시 후 다시 말 걸어주시오!'
+          );
+        } finally {
+          setLoading(false);
+          requestAnimationFrame(() => {
+            if (textareaRef.current) textareaRef.current.focus();
+          });
+        }
+      }, [input, loading, messages]);
+
+      // Enter 전송 / Shift+Enter 줄바꿈
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          send();
+        }
+      };
+
+      return (
+        <div className="mx-auto flex h-[100dvh] w-full max-w-3xl flex-col bg-stone-950/55 shadow-[0_0_70px_rgba(0,0,0,0.7)] backdrop-blur-md sm:border-x sm:border-amber-900/40">
+          <Header />
+
+          {/* 채팅 영역 */}
+          <main
+            ref={scrollRef}
+            className="chat-scroll flex-1 space-y-4 overflow-y-auto px-4 py-6 sm:px-6"
+          >
+            {messages.map((m, i) => (
+              <ChatBubble key={i} role={m.role} content={m.content} />
+            ))}
+
+            {showQuickPrompts && !loading && (
+              <QuickPrompts onPick={(q) => send(q)} disabled={loading} />
+            )}
+
+            {loading && <TypingIndicator />}
+
+            <ErrorBanner message={error} onClose={() => setError('')} />
+          </main>
+
+          {/* 입력 영역 */}
+          <footer className="flex-shrink-0 border-t border-amber-400/15 bg-stone-950/40 px-3 py-3 backdrop-blur sm:px-5 sm:py-4">
+            <div className="flex items-end gap-2 rounded-2xl bg-stone-800/70 p-2 ring-1 ring-amber-400/15 focus-within:ring-amber-400/50">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={loading}
+                placeholder="필요한 물건을 말해보시오! (예: 출근룩 셔츠 추천해줘)"
+                aria-label="메시지 입력"
+                className="max-h-40 flex-1 resize-none bg-transparent px-3 py-2 text-[15px] text-amber-50 placeholder-amber-200/35 outline-none disabled:opacity-50"
+                style={{ minHeight: '44px' }}
+              />
+              <button
+                type="button"
+                onClick={() => send()}
+                disabled={loading || !input.trim()}
+                aria-label="전송"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg transition hover:from-amber-400 hover:to-orange-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {loading ? (
+                  <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"
+                      fill="currentColor" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <p className="mt-2 px-2 text-center text-[11px] text-amber-200/40">
+              Enter 전송 · Shift+Enter 줄바꿈 · 캐릭터는 판타지지만 추천 브랜드·제품은 실제입니다 🛒
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      return <ChatPage />;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
