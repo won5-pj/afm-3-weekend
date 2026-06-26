@@ -3,3 +3,7 @@
 
 # Archives
 *.zip
+
+# Secrets / env
+.env
+**/.env

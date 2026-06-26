@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>오늘 뭐 입지? · 날씨 옷차림 추천</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: linear-gradient(135deg, #74ebd5 0%, #9face6 100%);
+      color: #2d3142;
+    }
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: rgba(255, 255, 255, 0.95);
+      border-radius: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
+      padding: 32px 28px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      text-align: center;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-bottom: 22px;
+    }
+    .search {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .search input {
+      flex: 1;
+      padding: 13px 16px;
+      border: 2px solid #e5e7eb;
+      border-radius: 12px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search input:focus { border-color: #9face6; }
+    .search button {
+      padding: 0 18px;
+      border: none;
+      border-radius: 12px;
+      background: #6c5ce7;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .search button:hover { background: #5a4bd1; }
+    .search button:disabled { background: #b8b8d1; cursor: not-allowed; }
+    .geo-btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 12px;
+      background: #f0f0fa;
+      color: #6c5ce7;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 18px;
+    }
+    .geo-btn:hover { background: #e6e6f7; }
+    .result { display: none; }
+    .result.show { display: block; animation: fade 0.4s ease; }
+    @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .loc {
+      text-align: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+    .weather-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: #f7f8fc;
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+    .weather-box img { width: 64px; height: 64px; }
+    .temp { font-size: 2.4rem; font-weight: 800; line-height: 1; }
+    .weather-meta { font-size: 0.82rem; color: #6b7280; margin-top: 4px; }
+    .headline {
+      text-align: center;
+      font-size: 1.3rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .level-badge {
+      display: inline-block;
+      background: #6c5ce7;
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+    }
+    .level-wrap { text-align: center; margin-bottom: 16px; }
+    .items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 16px;
+    }
+    .chip {
+      background: #eef0fb;
+      color: #4338ca;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .tip, .extra {
+      background: #fffbe9;
+      border-left: 4px solid #f4c430;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.88rem;
+      line-height: 1.5;
+      margin-bottom: 8px;
+    }
+    .extra { background: #eaf4ff; border-left-color: #3b9eff; }
+    .error {
+      display: none;
+      background: #ffecec;
+      color: #c0392b;
+      border-radius: 12px;
+      padding: 14px;
+      text-align: center;
+      font-size: 0.9rem;
+      margin-top: 10px;
+    }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>👕 오늘 뭐 입지?</h1>
+    <p class="subtitle">도시를 입력하면 현재 날씨에 맞는 옷차림을 추천해 드려요</p>
+
+    <div class="search">
+      <input id="cityInput" type="text" placeholder="도시명 (예: Seoul, Busan, Tokyo)" />
+      <button id="searchBtn">추천</button>
+    </div>
+    <button class="geo-btn" id="geoBtn">📍 내 위치로 추천받기</button>
+
+    <div class="error" id="error"></div>
+
+    <div class="result" id="result">
+      <div class="loc" id="loc"></div>
+      <div class="weather-box">
+        <img id="wIcon" alt="" />
+        <div>
+          <div class="temp" id="temp"></div>
+          <div class="weather-meta" id="wMeta"></div>
+        </div>
+      </div>
+      <div class="headline" id="headline"></div>
+      <div class="level-wrap"><span class="level-badge" id="level"></span></div>
+      <div class="items" id="items"></div>
+      <div class="tip" id="tip"></div>
+      <div id="extras"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const cityInput = $('cityInput');
+    const searchBtn = $('searchBtn');
+    const geoBtn = $('geoBtn');
+    const errorBox = $('error');
+    const resultBox = $('result');
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.add('show');
+      resultBox.classList.remove('show');
+    }
+    function clearError() {
+      errorBox.classList.remove('show');
+    }
+
+    async function fetchRecommend(params) {
+      clearError();
+      searchBtn.disabled = true;
+      searchBtn.textContent = '...';
+      try {
+        const res = await fetch(`/recommend?${params}`);
+        const data = await res.json();
+        if (!res.ok) {
+          showError(data.error || '추천을 가져오지 못했어요.');
+          return;
+        }
+        render(data);
+      } catch (e) {
+        showError('서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.');
+      } finally {
+        searchBtn.disabled = false;
+        searchBtn.textContent = '추천';
+      }
+    }
+
+    function render(data) {
+      const { location, weather, recommendation } = data;
+      $('loc').textContent = `📍 ${location.name}${location.country ? ', ' + location.country : ''}`;
+      $('temp').textContent = `${weather.temp}°C`;
+      $('wMeta').textContent =
+        `체감 ${weather.feelsLike}°C · ${weather.description} · 습도 ${weather.humidity}%`;
+      if (weather.icon) {
+        $('wIcon').src = `https://openweathermap.org/img/wn/${weather.icon}@2x.png`;
+        $('wIcon').style.display = '';
+      } else {
+        $('wIcon').style.display = 'none';
+      }
+      $('headline').textContent = `${recommendation.emoji} ${recommendation.headline}`;
+      $('level').textContent = recommendation.level;
+
+      const itemsEl = $('items');
+      itemsEl.innerHTML = '';
+      recommendation.items.forEach((it) => {
+        const span = document.createElement('span');
+        span.className = 'chip';
+        span.textContent = it;
+        itemsEl.appendChild(span);
+      });
+
+      $('tip').textContent = '💡 ' + recommendation.tip;
+
+      const extrasEl = $('extras');
+      extrasEl.innerHTML = '';
+      (recommendation.extras || []).forEach((ex) => {
+        const div = document.createElement('div');
+        div.className = 'extra';
+        div.textContent = ex;
+        extrasEl.appendChild(div);
+      });
+
+      resultBox.classList.add('show');
+    }
+
+    searchBtn.addEventListener('click', () => {
+      const city = cityInput.value.trim();
+      if (!city) {
+        showError('도시명을 입력해 주세요.');
+        return;
+      }
+      fetchRecommend(`city=${encodeURIComponent(city)}`);
+    });
+
+    cityInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') searchBtn.click();
+    });
+
+    geoBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        showError('이 브라우저는 위치 정보를 지원하지 않아요.');
+        return;
+      }
+      geoBtn.textContent = '📍 위치 확인 중...';
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          geoBtn.textContent = '📍 내 위치로 추천받기';
+          fetchRecommend(`lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
+        },
+        () => {
+          geoBtn.textContent = '📍 내 위치로 추천받기';
+          showError('위치 권한이 거부되었어요. 도시명으로 검색해 주세요.');
+        }
+      );
+    });
+
+    // 시작 시 서울 날씨로 기본 추천
+    fetchRecommend('city=Seoul');
+  </script>
+</body>
+</html>
