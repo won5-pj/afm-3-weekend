@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StoryMe — 오상원에게 물어보기</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --panel-2: #273449;
+      --accent: #6366f1;
+      --accent-2: #818cf8;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --user: #6366f1;
+      --bot: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+        "Malgun Gothic", sans-serif;
+      background: radial-gradient(1200px 600px at 50% -10%, #1e293b, var(--bg));
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .app {
+      width: 100%;
+      max-width: 720px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 4px 16px;
+    }
+    .avatar {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px; flex-shrink: 0;
+    }
+    header h1 { font-size: 18px; margin: 0; }
+    header p { font-size: 12.5px; margin: 2px 0 0; color: var(--muted); }
+    .chat {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 8px 4px;
+    }
+    .msg {
+      display: flex;
+      gap: 8px;
+      max-width: 85%;
+      animation: pop .18s ease;
+    }
+    @keyframes pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+    .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+    .bubble {
+      padding: 11px 14px;
+      border-radius: 16px;
+      line-height: 1.55;
+      font-size: 14.5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user .bubble { background: var(--user); border-bottom-right-radius: 4px; }
+    .msg.bot .bubble { background: var(--bot); border-bottom-left-radius: 4px; }
+    .tag {
+      width: 30px; height: 30px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; flex-shrink: 0;
+      background: var(--panel-2);
+    }
+    .msg.user .tag { background: var(--accent); }
+    .typing .bubble { color: var(--muted); font-style: italic; }
+    .err .bubble { background: #7f1d1d; }
+    form {
+      display: flex;
+      gap: 8px;
+      padding-top: 12px;
+    }
+    textarea {
+      flex: 1;
+      resize: none;
+      border: 1px solid #334155;
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 14.5px;
+      font-family: inherit;
+      line-height: 1.4;
+      max-height: 120px;
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    button {
+      border: none;
+      background: var(--accent);
+      color: white;
+      border-radius: 12px;
+      padding: 0 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-2); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .hint { font-size: 11.5px; color: var(--muted); text-align: center; padding-top: 6px; }
+    .chat::-webkit-scrollbar { width: 8px; }
+    .chat::-webkit-scrollbar-thumb { background: #334155; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="avatar">🧑‍💼</div>
+      <div>
+        <h1>StoryMe — 오상원에게 물어보기</h1>
+        <p>자기소개(about-me.md)를 근거로 답해요. 문서에 없는 건 "몰라요."</p>
+      </div>
+    </header>
+
+    <div class="chat" id="chat"></div>
+
+    <form id="form">
+      <textarea id="input" rows="1" placeholder="예) 오상원 씨 직업이 뭐예요?" autocomplete="off"></textarea>
+      <button type="submit" id="send">전송</button>
+    </form>
+    <div class="hint">Enter 전송 · Shift+Enter 줄바꿈</div>
+  </div>
+
+  <script>
+    const chatEl = document.getElementById('chat');
+    const formEl = document.getElementById('form');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+
+    // 대화 기록 (서버로 그대로 전달)
+    const messages = [];
+
+    function addBubble(role, text, opts = {}) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + (role === 'user' ? 'user' : 'bot') +
+        (opts.typing ? ' typing' : '') + (opts.error ? ' err' : '');
+      const tag = document.createElement('div');
+      tag.className = 'tag';
+      tag.textContent = role === 'user' ? '🙋' : '🧑‍💼';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      wrap.appendChild(tag);
+      wrap.appendChild(bubble);
+      chatEl.appendChild(wrap);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return { wrap, bubble };
+    }
+
+    // 첫 인사
+    addBubble('bot', '안녕하세요! 저는 오상원에 대해 답하는 도우미예요. 자기소개 문서에 적힌 내용만 알려드릴 수 있고, 문서에 없는 건 "몰라요." 라고 답해요. 무엇이 궁금하세요?');
+
+    function autoGrow() {
+      inputEl.style.height = 'auto';
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+    }
+    inputEl.addEventListener('input', autoGrow);
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        formEl.requestSubmit();
+      }
+    });
+
+    formEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = inputEl.value.trim();
+      if (!text) return;
+
+      addBubble('user', text);
+      messages.push({ role: 'user', content: text });
+      inputEl.value = '';
+      autoGrow();
+
+      sendBtn.disabled = true;
+      inputEl.disabled = true;
+      const typing = addBubble('bot', '입력 중...', { typing: true });
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages }),
+        });
+        const data = await res.json();
+
+        typing.wrap.remove();
+
+        if (!res.ok) {
+          addBubble('bot', '⚠️ ' + (data.error || '오류가 발생했습니다.'), { error: true });
+        } else {
+          addBubble('bot', data.reply);
+          messages.push({ role: 'assistant', content: data.reply });
+        }
+      } catch (err) {
+        typing.wrap.remove();
+        addBubble('bot', '⚠️ 서버에 연결할 수 없습니다.', { error: true });
+      } finally {
+        sendBtn.disabled = false;
+        inputEl.disabled = false;
+        inputEl.focus();
+      }
+    });
+
+    inputEl.focus();
+  </script>
+</body>
+</html>
