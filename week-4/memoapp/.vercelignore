@@ -1,0 +1,6 @@
+node_modules
+.env
+.env.example
+# 로컬 개발용 http 서버. Vercel 에서는 api/ 서버리스 함수 + 정적 index.html 로 동작하므로 제외.
+# (이 파일이 있으면 Vercel 이 server.js 를 단일 진입점으로 실행해 버린다)
+server.js

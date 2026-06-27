@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/memos.js", "use": "@vercel/node" },
+    { "src": "api/memo-item.js", "use": "@vercel/node" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/memos", "dest": "/api/memos.js" },
+    { "src": "/api/memos/([^/]+)", "dest": "/api/memo-item.js?id=$1" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
