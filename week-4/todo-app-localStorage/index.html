@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>할 일 목록</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. Babel 은 반드시 7.x 로 고정 (8.x 미지원). -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // ========================================
+    // 💾 localStorage 저장소 설정
+    // ========================================
+    const STORAGE_KEY = 'todos';        // 할 일 배열 (JSON)
+    const COUNTER_KEY = 'todos:counter'; // id 증가 카운터
+
+    // 기본 할 일 (최초 로드 시 1회 초기화)
+    const DEFAULT_TODOS = [
+      { done: false, title: '이메일 확인하고 답장하기', due: '오늘 오전', priority: '높음' },
+      { done: false, title: '주간 업무 보고서 작성하기', due: '오늘 오후 5시', priority: '높음' },
+      { done: false, title: '장보기 (우유, 계란, 빵)', due: '퇴근 후', priority: '보통' },
+      { done: false, title: '운동 2시간', due: '', priority: '보통' },
+      { done: false, title: '강의 다시보기', due: '', priority: '보통' },
+    ];
+
+    // id 카운터 읽기/쓰기 → 새로고침 후에도 id 중복 방지
+    function readCounter() {
+      const raw = localStorage.getItem(COUNTER_KEY);
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) ? n : 0;
+    }
+    function nextId() {
+      const n = readCounter() + 1;
+      localStorage.setItem(COUNTER_KEY, String(n));
+      return `todo-${n}`;
+    }
+
+    // 목록 저장
+    function saveTodos(todos) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(todos));
+    }
+
+    // 목록 로드 (비어 있으면 기본값으로 초기화 후 저장)
+    function loadTodos() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          // 손상된 데이터는 무시하고 기본값으로 초기화
+        }
+      }
+      // 최초 로드 또는 손상 시: 기본 할 일에 고유 id 부여 후 저장
+      const seeded = DEFAULT_TODOS.map((t) => ({ id: nextId(), ...t }));
+      saveTodos(seeded);
+      return seeded;
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // 우선순위 배지
+    function PriorityBadge({ priority }) {
+      const styles = {
+        '높음': 'bg-red-100 text-red-700 ring-red-200',
+        '보통': 'bg-amber-100 text-amber-700 ring-amber-200',
+        '낮음': 'bg-slate-100 text-slate-600 ring-slate-200',
+      };
+      const cls = styles[priority] || styles['낮음'];
+      return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ring-inset ${cls}`}>
+          {priority || '낮음'}
+        </span>
+      );
+    }
+
+    // 입력
+    function Input({ value, onChange, placeholder, type = 'text', onKeyDown, className = '', ariaLabel }) {
+      return (
+        <input
+          type={type}
+          value={value}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
+          className={`w-full px-3 py-2 rounded-lg text-sm text-slate-800 bg-white
+            ring-1 ring-inset ring-slate-300 placeholder:text-slate-400
+            focus:outline-none focus:ring-2 focus:ring-indigo-400 transition ${className}`}
+        />
+      );
+    }
+
+    // 셀렉트
+    function Select({ value, onChange, children, className = '', ariaLabel }) {
+      return (
+        <select
+          value={value}
+          onChange={onChange}
+          aria-label={ariaLabel}
+          className={`px-3 py-2 rounded-lg text-sm text-slate-800 bg-white cursor-pointer
+            ring-1 ring-inset ring-slate-300
+            focus:outline-none focus:ring-2 focus:ring-indigo-400 transition ${className}`}
+        >
+          {children}
+        </select>
+      );
+    }
+
+    // 기본(채워진) 버튼
+    function PrimaryButton({ onClick, disabled, children, className = '' }) {
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold
+            bg-indigo-600 text-white shadow-sm
+            hover:bg-indigo-500 active:bg-indigo-700 transition
+            disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // 카드
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // 체크박스
+    function Checkbox({ checked, onChange, id }) {
+      return (
+        <input
+          type="checkbox"
+          id={id}
+          checked={checked}
+          onChange={onChange}
+          className="h-5 w-5 rounded-md border-slate-300 text-indigo-600
+            focus:ring-2 focus:ring-indigo-400 cursor-pointer transition"
+        />
+      );
+    }
+
+    // ========================================
+    // 🧩 빈 목록 상태
+    // ========================================
+
+    function EmptyState() {
+      return (
+        <div className="py-16 text-center text-slate-400">
+          <div className="text-4xl mb-3">📭</div>
+          <p className="text-sm">할 일이 없어요. 즐거운 하루 보내세요!</p>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 할 일 추가 폼
+    // ========================================
+
+    function AddTodoForm({ onAdd }) {
+      const [title, setTitle] = useState('');
+      const [due, setDue] = useState('');
+      const [priority, setPriority] = useState('보통');
+
+      const canSubmit = title.trim().length > 0;
+
+      const submit = () => {
+        if (!canSubmit) return;
+        onAdd({
+          title: title.trim(),
+          due: due.trim(),
+          priority,
+        });
+        // 추가 후 폼 비우기
+        setTitle('');
+        setDue('');
+        setPriority('보통');
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter') submit();
+      };
+
+      return (
+        <Card className="mb-4 p-4">
+          <div className="flex flex-col gap-2.5">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="할 일을 입력하세요 (필수)"
+              ariaLabel="할 일 제목"
+            />
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <Input
+                value={due}
+                onChange={(e) => setDue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="마감 (예: 오늘 오후, 내일)"
+                ariaLabel="마감"
+                className="flex-1"
+              />
+              <Select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+                ariaLabel="우선순위"
+                className="sm:w-28"
+              >
+                <option value="높음">높음</option>
+                <option value="보통">보통</option>
+                <option value="낮음">낮음</option>
+              </Select>
+              <PrimaryButton onClick={submit} disabled={!canSubmit} className="sm:w-24">
+                추가
+              </PrimaryButton>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🧩 Todo 항목 컴포넌트
+    // ========================================
+
+    function TodoItem({ todo, onToggle, onDelete }) {
+      return (
+        <li className="flex items-start gap-3 px-4 py-3.5 hover:bg-slate-50/70 transition">
+          <div className="pt-0.5">
+            <Checkbox
+              id={todo.id}
+              checked={todo.done}
+              onChange={() => onToggle(todo.id)}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <label
+              htmlFor={todo.id}
+              className={`block text-[15px] font-medium cursor-pointer break-words transition
+                ${todo.done ? 'line-through text-slate-400' : 'text-slate-800'}`}
+            >
+              {todo.title}
+            </label>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {todo.due && (
+                <span className={`inline-flex items-center gap-1 text-xs ${todo.done ? 'text-slate-300' : 'text-slate-500'}`}>
+                  🕒 {todo.due}
+                </span>
+              )}
+              <PriorityBadge priority={todo.priority} />
+            </div>
+          </div>
+          <button
+            onClick={() => onDelete(todo.id)}
+            aria-label="삭제"
+            title="삭제"
+            className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50
+              transition"
+          >
+            <span className="text-base">🗑</span>
+          </button>
+        </li>
+      );
+    }
+
+    // ========================================
+    // 📄 App Component
+    // ========================================
+
+    function App() {
+      // 최초 렌더 시 localStorage에서 동기적으로 로드 (없으면 기본값 초기화)
+      const [todos, setTodos] = useState(() => loadTodos());
+
+      // todos 변경 시마다 localStorage에 저장
+      useEffect(() => {
+        saveTodos(todos);
+      }, [todos]);
+
+      // 완료 토글
+      const handleToggle = useCallback((id) => {
+        setTodos((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t))
+        );
+      }, []);
+
+      // 할 일 추가
+      const handleAdd = useCallback(({ title, due, priority }) => {
+        const newTodo = { id: nextId(), done: false, title, due, priority };
+        setTodos((prev) => [...prev, newTodo]);
+      }, []);
+
+      // 할 일 삭제
+      const handleDelete = useCallback((id) => {
+        setTodos((prev) => prev.filter((t) => t.id !== id));
+      }, []);
+
+      const total = todos.length;
+      const doneCount = useMemo(() => todos.filter((t) => t.done).length, [todos]);
+
+      return (
+        <div className="min-h-screen flex justify-center px-4 py-8 sm:py-12">
+          <div className="w-full max-w-lg">
+
+            {/* 헤더 */}
+            <header className="mb-5">
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">할 일 목록</h1>
+              <p className="mt-1 text-sm text-slate-500">
+                {total}개 중 <span className="font-semibold text-indigo-600">{doneCount}개</span> 완료
+              </p>
+            </header>
+
+            {/* 진행률 바 */}
+            {total > 0 && (
+              <div className="mb-4 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                  style={{ width: `${total ? (doneCount / total) * 100 : 0}%` }}
+                ></div>
+              </div>
+            )}
+
+            {/* 할 일 추가 폼 */}
+            <AddTodoForm onAdd={handleAdd} />
+
+            {/* 본문 */}
+            <Card>
+              {total === 0 ? (
+                <EmptyState />
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {todos.map((todo) => (
+                    <TodoItem
+                      key={todo.id}
+                      todo={todo}
+                      onToggle={handleToggle}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            <p className="mt-4 text-center text-xs text-slate-400">
+              모든 변경 사항은 이 브라우저의 localStorage에 저장되며, 새로고침해도 그대로 유지됩니다.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>할 일 목록</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. Babel 은 반드시 7.x 로 고정 (8.x 미지원). -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // ========================================
+    // API 설정
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // 우선순위 배지
+    function PriorityBadge({ priority }) {
+      const styles = {
+        '높음': 'bg-red-100 text-red-700 ring-red-200',
+        '보통': 'bg-amber-100 text-amber-700 ring-amber-200',
+        '낮음': 'bg-slate-100 text-slate-600 ring-slate-200',
+      };
+      const cls = styles[priority] || styles['낮음'];
+      return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ring-inset ${cls}`}>
+          {priority || '낮음'}
+        </span>
+      );
+    }
+
+    // 버튼
+    function Button({ onClick, disabled, children, className = '' }) {
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium
+            bg-white text-slate-700 ring-1 ring-inset ring-slate-300 shadow-sm
+            hover:bg-slate-50 active:bg-slate-100 transition
+            disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // 입력
+    function Input({ value, onChange, placeholder, type = 'text', onKeyDown, className = '', ariaLabel }) {
+      return (
+        <input
+          type={type}
+          value={value}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
+          className={`w-full px-3 py-2 rounded-lg text-sm text-slate-800 bg-white
+            ring-1 ring-inset ring-slate-300 placeholder:text-slate-400
+            focus:outline-none focus:ring-2 focus:ring-indigo-400 transition ${className}`}
+        />
+      );
+    }
+
+    // 셀렉트
+    function Select({ value, onChange, children, className = '', ariaLabel }) {
+      return (
+        <select
+          value={value}
+          onChange={onChange}
+          aria-label={ariaLabel}
+          className={`px-3 py-2 rounded-lg text-sm text-slate-800 bg-white cursor-pointer
+            ring-1 ring-inset ring-slate-300
+            focus:outline-none focus:ring-2 focus:ring-indigo-400 transition ${className}`}
+        >
+          {children}
+        </select>
+      );
+    }
+
+    // 기본(채워진) 버튼
+    function PrimaryButton({ onClick, disabled, children, className = '' }) {
+      return (
+        <button
+          onClick={onClick}
+          disabled={disabled}
+          className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold
+            bg-indigo-600 text-white shadow-sm
+            hover:bg-indigo-500 active:bg-indigo-700 transition
+            disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        >
+          {children}
+        </button>
+      );
+    }
+
+    // 카드
+    function Card({ children, className = '' }) {
+      return (
+        <div className={`bg-white rounded-2xl shadow-sm ring-1 ring-slate-200 ${className}`}>
+          {children}
+        </div>
+      );
+    }
+
+    // 체크박스
+    function Checkbox({ checked, onChange, id }) {
+      return (
+        <input
+          type="checkbox"
+          id={id}
+          checked={checked}
+          onChange={onChange}
+          className="h-5 w-5 rounded-md border-slate-300 text-indigo-600
+            focus:ring-2 focus:ring-indigo-400 cursor-pointer transition"
+        />
+      );
+    }
+
+    // ========================================
+    // 🧩 상태 표시 컴포넌트 (로딩 / 에러 / 빈 목록)
+    // ========================================
+
+    function LoadingState() {
+      return (
+        <div className="py-16 text-center text-slate-500">
+          <div className="mx-auto h-8 w-8 mb-3 rounded-full border-2 border-slate-200 border-t-indigo-500 animate-spin"></div>
+          <p className="text-sm">불러오는 중...</p>
+        </div>
+      );
+    }
+
+    function ErrorState({ message, onRetry }) {
+      return (
+        <div className="py-16 text-center">
+          <div className="text-4xl mb-3">⚠️</div>
+          <p className="text-sm text-red-600 mb-4">목록을 불러오지 못했어요.<br/>{message}</p>
+          <Button onClick={onRetry}>다시 시도</Button>
+        </div>
+      );
+    }
+
+    function EmptyState() {
+      return (
+        <div className="py-16 text-center text-slate-400">
+          <div className="text-4xl mb-3">📭</div>
+          <p className="text-sm">할 일이 없어요. 즐거운 하루 보내세요!</p>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 할 일 추가 폼
+    // ========================================
+
+    function AddTodoForm({ onAdd, adding }) {
+      const [title, setTitle] = useState('');
+      const [due, setDue] = useState('');
+      const [priority, setPriority] = useState('보통');
+
+      const canSubmit = title.trim().length > 0 && !adding;
+
+      const submit = async () => {
+        if (!canSubmit) return;
+        const ok = await onAdd({
+          title: title.trim(),
+          due: due.trim(),
+          priority,
+        });
+        // 성공 시에만 폼 비우기
+        if (ok) {
+          setTitle('');
+          setDue('');
+          setPriority('보통');
+        }
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Enter') submit();
+      };
+
+      return (
+        <Card className="mb-4 p-4">
+          <div className="flex flex-col gap-2.5">
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="할 일을 입력하세요 (필수)"
+              ariaLabel="할 일 제목"
+            />
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <Input
+                value={due}
+                onChange={(e) => setDue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="마감 (예: 오늘 오후, 내일)"
+                ariaLabel="마감"
+                className="flex-1"
+              />
+              <Select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value)}
+                ariaLabel="우선순위"
+                className="sm:w-28"
+              >
+                <option value="높음">높음</option>
+                <option value="보통">보통</option>
+                <option value="낮음">낮음</option>
+              </Select>
+              <PrimaryButton onClick={submit} disabled={!canSubmit} className="sm:w-24">
+                {adding ? '추가 중...' : '추가'}
+              </PrimaryButton>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🧩 Todo 항목 컴포넌트
+    // ========================================
+
+    function TodoItem({ todo, onToggle, onDelete, deleting }) {
+      return (
+        <li className="flex items-start gap-3 px-4 py-3.5 hover:bg-slate-50/70 transition">
+          <div className="pt-0.5">
+            <Checkbox
+              id={todo.id}
+              checked={todo.done}
+              onChange={() => onToggle(todo.id)}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <label
+              htmlFor={todo.id}
+              className={`block text-[15px] font-medium cursor-pointer break-words transition
+                ${todo.done ? 'line-through text-slate-400' : 'text-slate-800'}`}
+            >
+              {todo.title}
+            </label>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {todo.due && (
+                <span className={`inline-flex items-center gap-1 text-xs ${todo.done ? 'text-slate-300' : 'text-slate-500'}`}>
+                  🕒 {todo.due}
+                </span>
+              )}
+              <PriorityBadge priority={todo.priority} />
+            </div>
+          </div>
+          <button
+            onClick={() => onDelete(todo.id)}
+            disabled={deleting}
+            aria-label="삭제"
+            title="삭제"
+            className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50
+              transition disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {deleting ? (
+              <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-200 border-t-red-500 animate-spin"></span>
+            ) : (
+              <span className="text-base">🗑</span>
+            )}
+          </button>
+        </li>
+      );
+    }
+
+    // ========================================
+    // 📄 App Component
+    // ========================================
+
+    function App() {
+      const [todos, setTodos] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);       // 목록 로드 에러
+      const [actionError, setActionError] = useState(null); // 추가/삭제 에러
+      const [adding, setAdding] = useState(false);
+      const [deletingId, setDeletingId] = useState(null);
+
+      // 목록 불러오기
+      const fetchTodos = useCallback(async () => {
+        setLoading(true);
+        setError(null);
+        setActionError(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/todos`);
+          if (!res.ok) throw new Error(`서버 응답 오류 (${res.status})`);
+          const data = await res.json();
+          setTodos(Array.isArray(data) ? data : []);
+        } catch (e) {
+          setError(e.message || '알 수 없는 오류');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => {
+        fetchTodos();
+      }, [fetchTodos]);
+
+      // 체크박스 토글 → PATCH /api/todos/{id} (낙관적 업데이트)
+      const handleToggle = useCallback(async (id) => {
+        let prevDone;
+        // 1) 낙관적 업데이트: 클릭 즉시 UI 반영 (이전 상태도 함께 캡처)
+        setActionError(null);
+        setTodos((prev) =>
+          prev.map((t) => {
+            if (t.id !== id) return t;
+            prevDone = t.done;
+            return { ...t, done: !t.done };
+          })
+        );
+        if (prevDone === undefined) return; // 해당 항목 없음
+        const nextDone = !prevDone;
+
+        // 2) 서버 저장 시도
+        try {
+          const res = await fetch(`${API_BASE_URL}/todos/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ done: nextDone }),
+          });
+          if (!res.ok) throw new Error(`상태 저장 실패 (${res.status})`);
+          const updated = await res.json();
+          // 3) 서버 응답값으로 최종 반영
+          setTodos((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, ...updated } : t))
+          );
+        } catch (e) {
+          // 4) 실패 시 원래 상태로 롤백 + 에러 안내
+          setTodos((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, done: prevDone } : t))
+          );
+          setActionError(`완료 상태를 저장하지 못했어요: ${e.message || '알 수 없는 오류'}`);
+        }
+      }, []);
+
+      // 할 일 추가 → POST /api/todos
+      const handleAdd = useCallback(async ({ title, due, priority }) => {
+        setAdding(true);
+        setActionError(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/todos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, due, priority }),
+          });
+          if (!res.ok) throw new Error(`추가 실패 (${res.status})`);
+          const created = await res.json();
+          setTodos((prev) => [...prev, created]);
+          return true;
+        } catch (e) {
+          setActionError(`할 일을 추가하지 못했어요: ${e.message || '알 수 없는 오류'}`);
+          return false;
+        } finally {
+          setAdding(false);
+        }
+      }, []);
+
+      // 할 일 삭제 → DELETE /api/todos/{id}
+      const handleDelete = useCallback(async (id) => {
+        if (deletingId) return; // 처리 중 중복 방지
+        setDeletingId(id);
+        setActionError(null);
+        try {
+          const res = await fetch(`${API_BASE_URL}/todos/${id}`, { method: 'DELETE' });
+          if (!res.ok) throw new Error(`삭제 실패 (${res.status})`);
+          setTodos((prev) => prev.filter((t) => t.id !== id));
+        } catch (e) {
+          setActionError(`할 일을 삭제하지 못했어요: ${e.message || '알 수 없는 오류'}`);
+        } finally {
+          setDeletingId(null);
+        }
+      }, [deletingId]);
+
+      const total = todos.length;
+      const doneCount = useMemo(() => todos.filter((t) => t.done).length, [todos]);
+
+      return (
+        <div className="min-h-screen flex justify-center px-4 py-8 sm:py-12">
+          <div className="w-full max-w-lg">
+
+            {/* 헤더 */}
+            <header className="mb-5 flex items-end justify-between gap-3">
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">할 일 목록</h1>
+                {!loading && !error && (
+                  <p className="mt-1 text-sm text-slate-500">
+                    {total}개 중 <span className="font-semibold text-indigo-600">{doneCount}개</span> 완료
+                  </p>
+                )}
+              </div>
+              <Button onClick={fetchTodos} disabled={loading} className="shrink-0">
+                <span className={loading ? 'animate-spin' : ''}>🔄</span>
+                새로고침
+              </Button>
+            </header>
+
+            {/* 진행률 바 */}
+            {!loading && !error && total > 0 && (
+              <div className="mb-4 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                  style={{ width: `${total ? (doneCount / total) * 100 : 0}%` }}
+                ></div>
+              </div>
+            )}
+
+            {/* 할 일 추가 폼 (목록 로드 에러 시에는 숨김) */}
+            {!error && <AddTodoForm onAdd={handleAdd} adding={adding} />}
+
+            {/* 추가/삭제 에러 메시지 */}
+            {actionError && (
+              <div
+                role="alert"
+                className="mb-4 flex items-start justify-between gap-3 px-4 py-3 rounded-lg
+                  bg-red-50 text-red-700 ring-1 ring-inset ring-red-200 text-sm"
+              >
+                <span>⚠️ {actionError}</span>
+                <button
+                  onClick={() => setActionError(null)}
+                  aria-label="닫기"
+                  className="shrink-0 text-red-400 hover:text-red-600 transition"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* 본문 */}
+            <Card>
+              {loading ? (
+                <LoadingState />
+              ) : error ? (
+                <ErrorState message={error} onRetry={fetchTodos} />
+              ) : total === 0 ? (
+                <EmptyState />
+              ) : (
+                <ul className="divide-y divide-slate-100">
+                  {todos.map((todo) => (
+                    <TodoItem
+                      key={todo.id}
+                      todo={todo}
+                      onToggle={handleToggle}
+                      onDelete={handleDelete}
+                      deleting={deletingId === todo.id}
+                    />
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            <p className="mt-4 text-center text-xs text-slate-400">
+              체크 상태는 화면에서만 반영되며, 새로고침하면 서버 기준으로 다시 불러옵니다.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Company-01 보험 상담 챗봇</title>
+
+  <!-- ⚠️ 모든 CDN 버전 고정. @babel/standalone 은 반드시 7.x (8.x 는 text/babel 인라인 변환 깨짐) -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    /* 타이핑 인디케이터 점 애니메이션 (Tailwind 로 표현하기 까다로워 커스텀) */
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-4px); opacity: 1; }
+    }
+    .typing-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 9999px;
+      background-color: #64748b;
+      display: inline-block;
+      animation: typingBounce 1.2s infinite ease-in-out;
+    }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+    /* 메시지 영역 스크롤바 살짝 다듬기 */
+    .chat-scroll::-webkit-scrollbar { width: 8px; }
+    .chat-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 9999px; }
+    .chat-scroll::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body class="bg-slate-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks Destructuring
+    // ========================================
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // ========================================
+    // 상수 / 설정
+    // ========================================
+    // ✅ 같은 출처 상대경로 (서버가 이 파일을 같은 포트에서 서빙)
+    const API_BASE_URL = '/api';
+
+    const WELCOME_TEXT =
+      "안녕하세요! 😊 Company-01 보험 상담사입니다. " +
+      "'(무)건강든든 종합보험 7990' 상품에 대해 궁금한 점을 무엇이든 물어보세요. " +
+      "보험료, 보장 내용, 가입 조건 등 친절하게 안내해 드릴게요!";
+
+    const ERROR_TEXT = "죄송합니다. 잠시 후 다시 시도해 주세요. 🙏";
+
+    const QUICK_QUESTIONS = [
+      "월 보험료가 얼마인가요?",
+      "어떤 질병을 보장하나요?",
+      "만기에 환급금이 있나요?",
+      "가입 나이 제한이 있나요?",
+    ];
+
+    const ADVISOR_EMOJI = "💁";
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // 줄바꿈(\n)을 살려서 텍스트를 렌더링
+    function MultilineText({ text }) {
+      const lines = String(text).split("\n");
+      return (
+        <>
+          {lines.map((line, i) => (
+            <React.Fragment key={i}>
+              {line}
+              {i < lines.length - 1 && <br />}
+            </React.Fragment>
+          ))}
+        </>
+      );
+    }
+
+    // 상담사 아바타
+    function Avatar() {
+      return (
+        <div
+          className="flex-shrink-0 w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-lg shadow-sm"
+          aria-hidden="true"
+        >
+          {ADVISOR_EMOJI}
+        </div>
+      );
+    }
+
+    // 추천 질문 칩
+    function QuickChip({ label, onClick, disabled }) {
+      return (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          className="text-sm px-3 py-2 rounded-full border border-blue-200 bg-white text-blue-700
+                     hover:bg-blue-50 active:bg-blue-100 transition
+                     disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+        >
+          {label}
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🧩 메시지 / 인디케이터 컴포넌트
+    // ========================================
+
+    // 단일 메시지 말풍선
+    function MessageBubble({ role, content }) {
+      const isUser = role === "user";
+
+      if (isUser) {
+        return (
+          <div className="flex justify-end">
+            <div
+              className="max-w-[80%] sm:max-w-[70%] bg-blue-600 text-white rounded-2xl rounded-br-sm
+                         px-4 py-2.5 shadow-sm whitespace-pre-wrap break-words leading-relaxed"
+            >
+              <MultilineText text={content} />
+            </div>
+          </div>
+        );
+      }
+
+      // 어시스턴트(상담사)
+      return (
+        <div className="flex justify-start items-end gap-2">
+          <Avatar />
+          <div
+            className="max-w-[80%] sm:max-w-[70%] bg-white text-slate-800 rounded-2xl rounded-bl-sm
+                       px-4 py-2.5 shadow-sm border border-slate-100 whitespace-pre-wrap break-words leading-relaxed"
+          >
+            <MultilineText text={content} />
+          </div>
+        </div>
+      );
+    }
+
+    // 타이핑 인디케이터
+    function TypingIndicator() {
+      return (
+        <div className="flex justify-start items-end gap-2">
+          <Avatar />
+          <div className="bg-white rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm border border-slate-100">
+            <div className="flex items-center gap-2">
+              <span className="flex gap-1">
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+                <span className="typing-dot"></span>
+              </span>
+              <span className="text-xs text-slate-400">상담사가 입력 중...</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Layout: 헤더
+    // ========================================
+    function Header() {
+      return (
+        <header className="bg-gradient-to-r from-blue-700 to-blue-900 text-white shadow-md">
+          <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center text-2xl">
+              🛡️
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold leading-tight">
+                Company-01 보험 상담 챗봇
+              </h1>
+              <p className="text-xs sm:text-sm text-blue-100 truncate">
+                (무)건강든든 종합보험 7990 안내
+              </p>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    // ========================================
+    // 📄 Page: ChatApp (메인 비즈니스 로직)
+    // ========================================
+    function ChatApp() {
+      // 화면 표시용 메시지 (환영 메시지 포함)
+      const [messages, setMessages] = useState([
+        { role: "assistant", content: WELCOME_TEXT, welcome: true },
+      ]);
+      const [input, setInput] = useState("");
+      const [loading, setLoading] = useState(false);
+
+      const scrollRef = useRef(null);
+      const textareaRef = useRef(null);
+
+      // 자동 스크롤
+      useEffect(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, [messages, loading]);
+
+      // 메시지 전송 핵심 로직
+      const sendMessage = useCallback(
+        async (rawText) => {
+          const text = rawText.trim();
+          if (!text || loading) return;
+
+          // 1) 사용자 메시지를 화면에 추가
+          const userMsg = { role: "user", content: text };
+          // 서버로 보낼 대화 배열: 환영 메시지(welcome)는 제외
+          const historyForServer = messages
+            .filter((m) => !m.welcome)
+            .map((m) => ({ role: m.role, content: m.content }));
+          const outgoing = [...historyForServer, { role: "user", content: text }];
+
+          setMessages((prev) => [...prev, userMsg]);
+          setInput("");
+          setLoading(true);
+
+          // 2) 백엔드 호출
+          try {
+            const res = await fetch(`${API_BASE_URL}/chat`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ messages: outgoing }),
+            });
+
+            let data = null;
+            try {
+              data = await res.json();
+            } catch (e) {
+              data = null;
+            }
+
+            if (!res.ok || !data || data.error || typeof data.reply !== "string") {
+              throw new Error("bad response");
+            }
+
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: data.reply },
+            ]);
+          } catch (err) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: ERROR_TEXT, isError: true },
+            ]);
+          } finally {
+            setLoading(false);
+            // 입력창에 다시 포커스
+            requestAnimationFrame(() => {
+              if (textareaRef.current) textareaRef.current.focus();
+            });
+          }
+        },
+        [messages, loading]
+      );
+
+      // Enter 전송 / Shift+Enter 줄바꿈
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage(input);
+        }
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        sendMessage(input);
+      };
+
+      // 환영 메시지만 있는 초기 상태 여부 (추천 칩 표시용)
+      const showQuickChips = messages.filter((m) => m.role === "user").length === 0;
+
+      return (
+        <div className="h-screen flex flex-col bg-slate-100">
+          <Header />
+
+          {/* 채팅 메시지 영역 */}
+          <main
+            ref={scrollRef}
+            className="chat-scroll flex-1 overflow-y-auto"
+          >
+            <div className="max-w-2xl mx-auto px-4 py-5 space-y-4">
+              {messages.map((m, i) => (
+                <MessageBubble key={i} role={m.role} content={m.content} />
+              ))}
+
+              {/* 추천 질문 칩 (대화 시작 전에만 노출) */}
+              {showQuickChips && (
+                <div className="pl-11">
+                  <p className="text-xs text-slate-500 mb-2">💡 이런 점이 궁금하신가요?</p>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_QUESTIONS.map((q) => (
+                      <QuickChip
+                        key={q}
+                        label={q}
+                        disabled={loading}
+                        onClick={() => sendMessage(q)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {loading && <TypingIndicator />}
+            </div>
+          </main>
+
+          {/* 입력창 (하단 고정) */}
+          <footer className="bg-white border-t border-slate-200 shadow-[0_-1px_3px_rgba(0,0,0,0.04)]">
+            <form
+              onSubmit={handleSubmit}
+              className="max-w-2xl mx-auto px-4 py-3 flex items-end gap-2"
+            >
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={loading}
+                placeholder="궁금한 점을 입력해 주세요... (Shift+Enter 줄바꿈)"
+                aria-label="메시지 입력"
+                className="flex-1 resize-none max-h-32 rounded-2xl border border-slate-300
+                           px-4 py-2.5 text-sm leading-relaxed focus:outline-none
+                           focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                           disabled:bg-slate-100 disabled:cursor-not-allowed"
+              />
+              <button
+                type="submit"
+                disabled={loading || !input.trim()}
+                aria-label="전송"
+                className="flex-shrink-0 h-11 px-5 rounded-2xl bg-blue-600 text-white font-semibold
+                           hover:bg-blue-700 active:bg-blue-800 transition shadow-sm
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                전송
+              </button>
+            </form>
+            <p className="max-w-2xl mx-auto px-4 pb-2 text-[11px] text-slate-400 text-center">
+              본 상담 내용은 참고용이며, 정확한 보장 내용은 약관을 확인해 주세요.
+            </p>
+          </footer>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      return <ChatApp />;
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
