@@ -1,0 +1,14 @@
+{
+  "name": "random-balance-game",
+  "version": "1.0.0",
+  "description": "밸런스 게임 (양자택일 투표) 앱 (Express + PostgreSQL/Supabase)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "unkown-salary-compare",
+  "version": "1.0.0",
+  "description": "익명 연봉/지출 비교 앱 (Express + PostgreSQL/Supabase, SQL 집계)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

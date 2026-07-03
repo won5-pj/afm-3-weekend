@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚖️ 밸런스 게임</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN 버전 고정. Babel 은 반드시 7.x (8.x 는 인라인 text/babel 미지원). -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+    .bar-fill { transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 via-white to-rose-50 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ========================================
+    // ⚙️ 설정 / API 헬퍼
+    // ========================================
+    const API_BASE_URL = '/api'; // 같은 origin, 상대경로
+
+    async function apiRequest(path, options = {}) {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!res.ok) {
+        let msg = `요청 실패 (HTTP ${res.status})`;
+        try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    // 내가 투표한 기록 (중복 투표 방지 + 선택 표시) — localStorage 보관
+    const VOTE_KEY = 'balance_votes';
+    function loadVotes() {
+      try { return JSON.parse(localStorage.getItem(VOTE_KEY) || '{}'); } catch { return {}; }
+    }
+    function saveVote(id, choice) {
+      const v = loadVotes(); v[id] = choice;
+      localStorage.setItem(VOTE_KEY, JSON.stringify(v));
+    }
+
+    function timeAgo(iso) {
+      if (!iso) return '';
+      const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(iso).toLocaleDateString('ko-KR');
+    }
+
+    // ========================================
+    // 🎨 공통 컴포넌트
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', disabled, onClick, type = 'button', className = '', children }) {
+      const base = 'inline-flex items-center justify-center gap-1.5 font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-indigo-500 hover:bg-indigo-600 text-white focus:ring-indigo-300 shadow-sm',
+        secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 focus:ring-gray-200',
+      };
+      const sizes = { sm: 'px-2.5 py-1 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-base' };
+      return (
+        <button type={type} disabled={disabled} onClick={onClick}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}>{children}</button>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 ${className}`}>{children}</div>;
+    }
+
+    function Spinner({ label }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+          <div className="w-8 h-8 border-3 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mb-3"></div>
+          {label && <p className="text-sm">{label}</p>}
+        </div>
+      );
+    }
+
+    function EmptyState({ emoji, text }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-14 text-center">
+          <div className="text-5xl mb-3">{emoji}</div>
+          <p className="text-gray-400 text-sm max-w-xs">{text}</p>
+        </div>
+      );
+    }
+
+    function ErrorBanner({ message, onRetry, onDismiss }) {
+      if (!message) return null;
+      return (
+        <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm">
+          <span>⚠️ {message}</span>
+          <div className="flex gap-2 flex-none">
+            {onRetry && <button onClick={onRetry} className="underline hover:no-underline">다시 시도</button>}
+            {onDismiss && <button onClick={onDismiss} className="text-red-400 hover:text-red-600">✕</button>}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 💬 익명 리플 (댓글 + 공감) — 펼칠 때 로드
+    // ========================================
+    function Comments({ questionId, initialCount }) {
+      const [open, setOpen] = useState(false);
+      const [list, setList] = useState(null); // null = 아직 미로드
+      const [count, setCount] = useState(initialCount || 0);
+      const [text, setText] = useState('');
+      const [busy, setBusy] = useState(false);
+
+      const load = async () => {
+        try {
+          const data = await apiRequest(`/questions/${questionId}/comments`);
+          const arr = Array.isArray(data) ? data : [];
+          setList(arr); setCount(arr.length);
+        } catch (e) { alert(`리플 불러오기 실패: ${e.message}`); }
+      };
+
+      const toggle = () => {
+        const next = !open; setOpen(next);
+        if (next && list === null) load();
+      };
+
+      const add = async (e) => {
+        e.preventDefault();
+        const c = text.trim();
+        if (!c) return;
+        setBusy(true);
+        try {
+          const created = await apiRequest(`/questions/${questionId}/comments`, {
+            method: 'POST', body: JSON.stringify({ content: c }),
+          });
+          setList((prev) => [...(prev || []), created]);
+          setCount((n) => n + 1);
+          setText('');
+        } catch (e) { alert(`리플 작성 실패: ${e.message}`); }
+        finally { setBusy(false); }
+      };
+
+      const like = async (cid) => {
+        try {
+          const updated = await apiRequest(`/comments/${cid}/like`, { method: 'POST' });
+          setList((prev) => prev.map((c) => (c.id === cid ? updated : c)));
+        } catch (e) { alert(`공감 실패: ${e.message}`); }
+      };
+
+      const del = async (cid) => {
+        if (!confirm('이 리플을 삭제할까요?')) return;
+        try {
+          await apiRequest(`/comments/${cid}`, { method: 'DELETE' });
+          setList((prev) => prev.filter((c) => c.id !== cid));
+          setCount((n) => Math.max(0, n - 1));
+        } catch (e) { alert(`삭제 실패: ${e.message}`); }
+      };
+
+      return (
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <button onClick={toggle} className="text-xs font-semibold text-gray-500 hover:text-indigo-500 transition">
+            💬 익명 리플 {count}개 {open ? '▲ 접기' : '▼ 펼치기'}
+          </button>
+          {open && (
+            <div className="mt-3 space-y-2">
+              {list === null ? (
+                <p className="text-xs text-gray-400">불러오는 중...</p>
+              ) : list.length === 0 ? (
+                <p className="text-xs text-gray-400">아직 리플이 없어요. 첫 익명 리플을 남겨보세요!</p>
+              ) : list.map((c) => (
+                <div key={c.id} className="flex items-start gap-2 bg-gray-50 rounded-xl px-3 py-2">
+                  <span className="text-sm mt-0.5">🙈</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap break-words">{c.content}</p>
+                    <div className="mt-1 flex items-center gap-3 text-[11px] text-gray-400">
+                      <span>{timeAgo(c.created_at)}</span>
+                      <button onClick={() => like(c.id)} className="hover:text-rose-500 transition font-medium">❤️ 공감 {c.likes}</button>
+                      <button onClick={() => del(c.id)} className="hover:text-red-400 transition">삭제</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              <form onSubmit={add} className="flex items-center gap-2 pt-1">
+                <input value={text} onChange={(e) => setText(e.target.value)} maxLength={300} disabled={busy}
+                  placeholder="익명으로 리플 달기..."
+                  className="flex-1 px-3 py-1.5 text-sm rounded-full border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:bg-gray-100" />
+                <button type="submit" disabled={busy}
+                  className="flex-none px-3 py-1.5 rounded-full bg-indigo-500 text-white text-xs font-semibold hover:bg-indigo-600 transition disabled:opacity-50">등록</button>
+              </form>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // ⚖️ 밸런스 카드 (투표 전: 선택 / 투표 후: 퍼센티지)
+    // ========================================
+    function BalanceCard({ item, myChoice, onVote, onDelete, voting }) {
+      const total = item.total || 0;
+      const voted = !!myChoice;
+      const pctA = total === 0 ? 0 : Math.round((item.votes_a / total) * 100);
+      const pctB = total === 0 ? 0 : 100 - pctA;
+
+      // 선택지 하나 렌더 (side: 'a' | 'b')
+      const Option = ({ side }) => {
+        const label = side === 'a' ? item.option_a : item.option_b;
+        const votes = side === 'a' ? item.votes_a : item.votes_b;
+        const pct = side === 'a' ? pctA : pctB;
+        const mine = myChoice === side;
+        const isA = side === 'a';
+        const accent = isA ? 'indigo' : 'rose';
+
+        if (!voted) {
+          return (
+            <button onClick={() => onVote(item.id, side)} disabled={voting}
+              className={`group relative flex-1 min-h-[110px] rounded-xl border-2 p-4 text-center transition-all disabled:opacity-60
+                ${isA ? 'border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50'
+                      : 'border-rose-200 hover:border-rose-400 hover:bg-rose-50'}`}>
+              <span className={`block text-xs font-bold mb-1 ${isA ? 'text-indigo-400' : 'text-rose-400'}`}>{isA ? 'A' : 'B'}</span>
+              <span className="block font-semibold text-gray-800 leading-snug break-words">{label}</span>
+            </button>
+          );
+        }
+        // 투표 후: 퍼센티지 바
+        return (
+          <div className={`relative flex-1 min-h-[110px] rounded-xl border-2 p-4 overflow-hidden
+            ${mine ? (isA ? 'border-indigo-400' : 'border-rose-400') : 'border-gray-100'}`}>
+            <div className={`bar-fill absolute inset-y-0 left-0 ${isA ? 'bg-indigo-100' : 'bg-rose-100'}`}
+              style={{ width: `${pct}%` }}></div>
+            <div className="relative">
+              <div className="flex items-center justify-between mb-1">
+                <span className={`text-xs font-bold ${isA ? 'text-indigo-500' : 'text-rose-500'}`}>{isA ? 'A' : 'B'}</span>
+                {mine && <span className="text-[11px] font-bold text-white px-1.5 py-0.5 rounded-full bg-gray-700">내 선택 ✓</span>}
+              </div>
+              <span className="block font-semibold text-gray-800 leading-snug break-words mb-2">{label}</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className={`text-2xl font-extrabold ${isA ? 'text-indigo-600' : 'text-rose-600'}`}>{pct}%</span>
+                <span className="text-xs text-gray-400">{votes}표</span>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <Card className="p-5 animate-fadeIn hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-semibold text-gray-400">⚖️ 밸런스 게임 · {timeAgo(item.created_at)}</span>
+            <button onClick={() => onDelete(item.id)} className="text-xs text-gray-300 hover:text-red-400 transition">🗑️</button>
+          </div>
+
+          <div className="flex items-stretch gap-2">
+            <Option side="a" />
+            <div className="flex items-center justify-center px-1">
+              <span className="text-sm font-black text-gray-300">VS</span>
+            </div>
+            <Option side="b" />
+          </div>
+
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
+            <span>👥 총 참여자 {total}명</span>
+            {voted
+              ? <span className="text-gray-400">투표 완료 · 실시간 반영 중</span>
+              : <span className="text-indigo-400 font-medium">한쪽을 눌러 투표하세요!</span>}
+          </div>
+
+          <Comments questionId={item.id} initialCount={item.comment_count} />
+        </Card>
+      );
+    }
+
+    // ========================================
+    // ✍️ 질문 등록 폼
+    // ========================================
+    function QuestionForm({ onCreated }) {
+      const [a, setA] = useState('');
+      const [b, setB] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      const inputCls = 'w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 transition disabled:bg-gray-100';
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!a.trim() || !b.trim()) { alert('두 선택지를 모두 입력해주세요.'); return; }
+        setSubmitting(true);
+        try {
+          const created = await apiRequest('/questions', {
+            method: 'POST',
+            body: JSON.stringify({ option_a: a.trim(), option_b: b.trim() }),
+          });
+          setA(''); setB('');
+          onCreated(created);
+        } catch (err) {
+          alert(`등록 실패: ${err.message}`);
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <Card className="p-5 lg:sticky lg:top-4">
+          <h2 className="text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">➕ 밸런스 질문 등록</h2>
+          <p className="text-xs text-gray-400 mb-4">둘 중 하나만 골라야 하는 딜레마를 만들어보세요.</p>
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div>
+              <span className="block mb-1 text-xs font-bold text-indigo-500">선택지 A</span>
+              <textarea value={a} onChange={(e) => setA(e.target.value)} rows={2} maxLength={200} disabled={submitting}
+                placeholder="예) 월급 500 + 주7일 출근" className={`${inputCls} focus:ring-indigo-300 focus:border-indigo-300 resize-y`} />
+            </div>
+            <div className="text-center text-sm font-black text-gray-300">VS</div>
+            <div>
+              <span className="block mb-1 text-xs font-bold text-rose-500">선택지 B</span>
+              <textarea value={b} onChange={(e) => setB(e.target.value)} rows={2} maxLength={200} disabled={submitting}
+                placeholder="예) 월급 300 + 주4일 출근" className={`${inputCls} focus:ring-rose-300 focus:border-rose-300 resize-y`} />
+            </div>
+            <Button type="submit" size="lg" variant="primary" className="w-full" disabled={submitting}>
+              {submitting ? '등록 중...' : '⚖️ 질문 등록'}
+            </Button>
+          </form>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [votes, setVotes] = useState(loadVotes());
+      const [votingId, setVotingId] = useState(null);
+      const [generating, setGenerating] = useState(false);
+      const isFirst = useRef(true);
+
+      const load = useCallback(async (silent) => {
+        if (!silent) setLoading(true);
+        try {
+          const data = await apiRequest('/questions');
+          setItems(Array.isArray(data) ? data : []);
+          setError('');
+        } catch (e) {
+          if (!silent) setError(e.message || '질문 목록을 불러오지 못했습니다.');
+        } finally {
+          if (!silent) setLoading(false);
+        }
+      }, []);
+
+      // 최초 로드 + 5초마다 실시간 폴링 (다른 사람 투표도 반영)
+      useEffect(() => {
+        load();
+        const t = setInterval(() => load(true), 5000);
+        return () => clearInterval(t);
+      }, [load]);
+
+      const handleCreated = (created) => {
+        if (created) setItems((prev) => [created, ...prev]);
+      };
+
+      // AI가 랜덤 밸런스 질문을 생성 → 목록 맨 위에 추가
+      const handleGenerate = async () => {
+        setGenerating(true);
+        try {
+          const created = await apiRequest('/questions/generate', { method: 'POST' });
+          if (created) setItems((prev) => [created, ...prev]);
+        } catch (e) {
+          alert(`자동생성 실패: ${e.message}`);
+        } finally {
+          setGenerating(false);
+        }
+      };
+
+      // 투표 → DB UPDATE → 반환된 최신 표 수로 화면 반영 (퍼센티지 변동)
+      const handleVote = async (id, choice) => {
+        if (votes[id]) return; // 이미 투표함
+        setVotingId(id);
+        try {
+          const updated = await apiRequest(`/questions/${id}/vote`, {
+            method: 'POST',
+            body: JSON.stringify({ choice }),
+          });
+          setItems((prev) => prev.map((it) => (it.id === id ? updated : it)));
+          saveVote(id, choice);
+          setVotes(loadVotes());
+        } catch (e) {
+          alert(`투표 실패: ${e.message}`);
+        } finally {
+          setVotingId(null);
+        }
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('이 질문을 삭제할까요?')) return;
+        try {
+          await apiRequest(`/questions/${id}`, { method: 'DELETE' });
+          setItems((prev) => prev.filter((it) => it.id !== id));
+        } catch (e) {
+          alert(`삭제 실패: ${e.message}`);
+        }
+      };
+
+      const totalVotes = items.reduce((s, it) => s + (it.total || 0), 0);
+
+      return (
+        <div className="max-w-5xl mx-auto px-4 py-8">
+          <header className="text-center mb-8">
+            <h1 className="text-3xl font-extrabold text-gray-800">⚖️ 밸런스 게임</h1>
+            <p className="mt-2 text-gray-500 text-sm">둘 중 하나만! 투표하면 실시간으로 결과가 바뀝니다.</p>
+            {!loading && (
+              <div className="mt-3 flex items-center justify-center gap-4 text-xs text-gray-400">
+                <span>⚖️ 질문 {items.length}개</span>
+                <span>🗳️ 총 투표 {totalVotes}표</span>
+              </div>
+            )}
+          </header>
+
+          <div className="grid gap-6 lg:grid-cols-5 items-start">
+            <div className="lg:col-span-2">
+              <QuestionForm onCreated={handleCreated} />
+            </div>
+
+            <div className="lg:col-span-3 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-lg font-bold text-gray-800">🗳️ 진행 중인 밸런스</h2>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={handleGenerate} disabled={generating}
+                    className="bg-indigo-500 hover:bg-indigo-600 text-white focus:ring-indigo-300 shadow-sm">
+                    {generating ? '🎲 생성 중...' : '🎲 질문 자동생성'}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>🔄</Button>
+                </div>
+              </div>
+              <ErrorBanner message={error} onRetry={() => load()} onDismiss={() => setError('')} />
+              {loading ? (
+                <Spinner label="질문을 불러오는 중..." />
+              ) : items.length === 0 && !error ? (
+                <EmptyState emoji="🤔" text="아직 등록된 밸런스 게임이 없어요. 첫 딜레마를 만들어보세요!" />
+              ) : (
+                <div className="grid gap-4">
+                  {items.map((it) => (
+                    <BalanceCard key={it.id} item={it} myChoice={votes[it.id]}
+                      onVote={handleVote} onDelete={handleDelete} voting={votingId === it.id} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <footer className="mt-12 text-center text-xs text-gray-300">⚖️ 밸런스 게임 · 5초마다 실시간 반영</footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

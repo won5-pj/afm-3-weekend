@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>💌 익명 칭찬 게시판</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- ⚠️ 모든 CDN 버전 고정. Babel 은 반드시 7.x (8.x 는 인라인 text/babel 미지원). -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+    @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+    .animate-pop { animation: pop 0.35s ease-out; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-rose-50 via-white to-amber-50 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // ========================================
+    // ⚙️ 설정 / API 헬퍼
+    // ========================================
+    const API_BASE_URL = '/api'; // 같은 origin, 상대경로
+
+    async function apiRequest(path, options = {}) {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options,
+      });
+      if (!res.ok) {
+        let msg = `요청 실패 (HTTP ${res.status})`;
+        try { const j = await res.json(); if (j && j.error) msg = j.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    }
+
+    // 칭찬 대상 카테고리
+    const CATEGORIES = ['동료', '친구', '가족', '이웃', '나 자신', '기타'];
+    const CATEGORY_STYLE = {
+      '동료': 'bg-sky-100 text-sky-700 border-sky-200',
+      '친구': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      '가족': 'bg-rose-100 text-rose-700 border-rose-200',
+      '이웃': 'bg-amber-100 text-amber-700 border-amber-200',
+      '나 자신': 'bg-violet-100 text-violet-700 border-violet-200',
+      '기타': 'bg-gray-100 text-gray-600 border-gray-200',
+    };
+    const CATEGORY_EMOJI = {
+      '동료': '🤝', '친구': '🫶', '가족': '👨‍👩‍👧', '이웃': '🏡', '나 자신': '🌟', '기타': '💬',
+    };
+
+    // 상대 시간 표기 (예: "3분 전")
+    function timeAgo(iso) {
+      if (!iso) return '';
+      const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(iso).toLocaleDateString('ko-KR');
+    }
+
+    // 반응 종류 (key ↔ DB 컬럼 field)
+    const REACTIONS = [
+      { key: 'like',  field: 'likes',  emoji: '❤️', label: '공감', cls: 'bg-rose-50 text-rose-600 border-rose-100 hover:bg-rose-100' },
+      { key: 'laugh', field: 'laughs', emoji: '😂', label: '웃음', cls: 'bg-amber-50 text-amber-600 border-amber-100 hover:bg-amber-100' },
+      { key: 'cry',   field: 'cries',  emoji: '😢', label: '울음', cls: 'bg-sky-50 text-sky-600 border-sky-100 hover:bg-sky-100' },
+    ];
+    const reactionTotal = (it) => REACTIONS.reduce((s, r) => s + (Number(it[r.field]) || 0), 0);
+
+    // 총 반응 수 → 메달 뱃지 (10개+ 금 / 8개+ 은 / 5개+ 동)
+    function medalBadge(total) {
+      if (total >= 10) return { emoji: '🥇', label: '금 뱃지', style: 'bg-yellow-100 text-yellow-700 border-yellow-300' };
+      if (total >= 8)  return { emoji: '🥈', label: '은 뱃지', style: 'bg-gray-200 text-gray-600 border-gray-300' };
+      if (total >= 5)  return { emoji: '🥉', label: '동 뱃지', style: 'bg-orange-100 text-orange-700 border-orange-300' };
+      return null;
+    }
+
+    // ========================================
+    // 🎨 디자인 시스템 컴포넌트
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', disabled, onClick, type = 'button', className = '', children }) {
+      const base = 'inline-flex items-center justify-center gap-1.5 font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-rose-500 hover:bg-rose-600 text-white focus:ring-rose-300 shadow-sm',
+        secondary: 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 focus:ring-gray-200',
+        danger: 'bg-white hover:bg-red-50 text-red-500 border border-red-200 focus:ring-red-200',
+        ghost: 'bg-transparent hover:bg-gray-100 text-gray-500 focus:ring-gray-200',
+      };
+      const sizes = { sm: 'px-2.5 py-1 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-base' };
+      return (
+        <button type={type} disabled={disabled} onClick={onClick}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}>
+          {children}
+        </button>
+      );
+    }
+
+    function Textarea({ label, value, onChange, placeholder, rows = 3, disabled, maxLength }) {
+      return (
+        <label className="block">
+          {label && <span className="block mb-1 text-sm font-medium text-gray-600">{label}</span>}
+          <textarea
+            value={value} onChange={onChange} placeholder={placeholder} rows={rows} disabled={disabled} maxLength={maxLength}
+            className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-rose-300 transition resize-y disabled:bg-gray-100"
+          />
+        </label>
+      );
+    }
+
+    function Card({ className = '', children }) {
+      return <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 ${className}`}>{children}</div>;
+    }
+
+    function Badge({ className = '', children }) {
+      return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${className}`}>{children}</span>;
+    }
+
+    function Spinner({ label }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+          <div className="w-8 h-8 border-3 border-rose-200 border-t-rose-500 rounded-full animate-spin mb-3"></div>
+          {label && <p className="text-sm">{label}</p>}
+        </div>
+      );
+    }
+
+    function EmptyState({ emoji, text }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-14 text-center">
+          <div className="text-5xl mb-3">{emoji}</div>
+          <p className="text-gray-400 text-sm max-w-xs">{text}</p>
+        </div>
+      );
+    }
+
+    function ErrorBanner({ message, onRetry, onDismiss }) {
+      if (!message) return null;
+      return (
+        <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm">
+          <span>⚠️ {message}</span>
+          <div className="flex gap-2 flex-none">
+            {onRetry && <button onClick={onRetry} className="underline hover:no-underline">다시 시도</button>}
+            {onDismiss && <button onClick={onDismiss} className="text-red-400 hover:text-red-600">✕</button>}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🏷️ 카테고리 선택 (칩)
+    // ========================================
+    function CategoryPicker({ value, onChange, disabled }) {
+      return (
+        <div>
+          <span className="block mb-1.5 text-sm font-medium text-gray-600">누구를 칭찬하나요?</span>
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORIES.map((c) => (
+              <button key={c} type="button" onClick={() => onChange(c)} disabled={disabled}
+                className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition disabled:opacity-50 ${
+                  value === c
+                    ? 'bg-rose-500 text-white border-rose-500 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-rose-50 hover:border-rose-200'
+                }`}>
+                {CATEGORY_EMOJI[c]} {c}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 💳 칭찬 카드
+    // ========================================
+    function PraiseCard({ item, onReact, onDelete, reacting }) {
+      const [popKey, setPopKey] = useState(null);
+
+      const handleReact = async (type) => {
+        setPopKey(type);
+        setTimeout(() => setPopKey(null), 400);
+        await onReact(item.id, type);
+      };
+
+      const total = reactionTotal(item);
+      const medal = medalBadge(total);
+
+      return (
+        <Card className="p-5 animate-fadeIn hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Badge className={CATEGORY_STYLE[item.category] || 'bg-gray-100 text-gray-600 border-gray-200'}>
+                {CATEGORY_EMOJI[item.category] || '💬'} {item.category || '기타'}
+              </Badge>
+              {medal && (
+                <Badge className={medal.style} title={`반응 ${total}개`}>
+                  {medal.emoji} {medal.label}
+                </Badge>
+              )}
+            </div>
+            <span className="text-xs text-gray-400">{timeAgo(item.created_at)}</span>
+          </div>
+
+          <p className="text-gray-800 text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+            {item.content}
+          </p>
+
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {REACTIONS.map((r) => (
+                <button key={r.key} onClick={() => handleReact(r.key)} disabled={reacting}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border font-semibold text-sm transition disabled:opacity-60 ${r.cls}`}>
+                  <span className={popKey === r.key ? 'animate-pop' : ''}>{r.emoji}</span>
+                  <span className="tabular-nums">{Number(item[r.field]) || 0}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => onDelete(item.id)}
+              className="text-xs text-gray-300 hover:text-red-400 transition flex-none">🗑️</button>
+          </div>
+
+          {medal && (
+            <p className="mt-2.5 text-[11px] text-gray-400">
+              🎉 반응 {total}개 달성 — {medal.emoji} {medal.label} 획득!
+            </p>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // ✍️ 작성 폼
+    // ========================================
+    function PraiseForm({ onCreated }) {
+      const [category, setCategory] = useState('동료');
+      const [content, setContent] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        const trimmed = content.trim();
+        if (!trimmed) { alert('칭찬 내용을 입력해주세요.'); return; }
+        setSubmitting(true);
+        try {
+          const created = await apiRequest('/praises', {
+            method: 'POST',
+            body: JSON.stringify({ category, content: trimmed }),
+          });
+          setContent('');
+          onCreated(created);
+        } catch (err) {
+          alert(`작성 실패: ${err.message}`);
+        } finally {
+          setSubmitting(false);
+        }
+      };
+
+      return (
+        <Card className="p-5 lg:sticky lg:top-4">
+          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">✍️ 익명 칭찬 남기기</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <CategoryPicker value={category} onChange={setCategory} disabled={submitting} />
+            <Textarea label="칭찬 내용" value={content} onChange={(e) => setContent(e.target.value)}
+              placeholder={"따뜻한 칭찬 한마디를 남겨주세요.\n예) 오늘 발표 정말 멋졌어요. 준비한 게 다 보였어요!"}
+              rows={5} maxLength={500} disabled={submitting} />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-400">{content.length}/500 · 익명으로 게시돼요</span>
+              <Button type="submit" size="lg" variant="primary" disabled={submitting}>
+                {submitting ? '게시 중...' : '💌 칭찬 게시'}
+              </Button>
+            </div>
+          </form>
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      const [items, setItems] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [reactingId, setReactingId] = useState(null);
+
+      const load = useCallback(async () => {
+        setLoading(true); setError('');
+        try {
+          const data = await apiRequest('/praises');
+          setItems(Array.isArray(data) ? data : []);
+        } catch (e) {
+          setError(e.message || '칭찬 목록을 불러오지 못했습니다.');
+        } finally {
+          setLoading(false);
+        }
+      }, []);
+
+      useEffect(() => { load(); }, [load]);
+
+      const handleCreated = (created) => {
+        if (created) setItems((prev) => [created, ...prev]);
+      };
+
+      // 반응 클릭(공감/웃음/울음) → DB UPDATE → 반환된 최신 카운트로 화면 반영
+      const handleReact = async (id, type) => {
+        setReactingId(id);
+        try {
+          const updated = await apiRequest(`/praises/${id}/react`, {
+            method: 'POST',
+            body: JSON.stringify({ type }),
+          });
+          setItems((prev) => prev.map((it) => (it.id === id ? updated : it)));
+        } catch (e) {
+          alert(`반응 실패: ${e.message}`);
+        } finally {
+          setReactingId(null);
+        }
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('이 칭찬을 삭제할까요?')) return;
+        try {
+          await apiRequest(`/praises/${id}`, { method: 'DELETE' });
+          setItems((prev) => prev.filter((it) => it.id !== id));
+        } catch (e) {
+          alert(`삭제 실패: ${e.message}`);
+        }
+      };
+
+      const totalReactions = items.reduce((sum, it) => sum + reactionTotal(it), 0);
+      const badgeCount = items.filter((it) => medalBadge(reactionTotal(it))).length;
+
+      return (
+        <div className="max-w-5xl mx-auto px-4 py-8">
+          {/* 헤더 */}
+          <header className="text-center mb-8">
+            <h1 className="text-3xl font-extrabold text-gray-800 flex items-center justify-center gap-2">
+              💌 익명 칭찬 게시판
+            </h1>
+            <p className="mt-2 text-gray-500 text-sm">이름 없이 전하는 따뜻한 한마디. ❤️ 공감 · 😂 웃음 · 😢 울음으로 반응해요.</p>
+            {!loading && (
+              <div className="mt-3 flex items-center justify-center gap-4 text-xs text-gray-400">
+                <span>💬 칭찬 {items.length}개</span>
+                <span>👍 반응 {totalReactions}개</span>
+                <span>🏅 뱃지 {badgeCount}개</span>
+              </div>
+            )}
+          </header>
+
+          <div className="grid gap-6 lg:grid-cols-5 items-start">
+            {/* 작성 폼 */}
+            <div className="lg:col-span-2">
+              <PraiseForm onCreated={handleCreated} />
+            </div>
+
+            {/* 목록 */}
+            <div className="lg:col-span-3 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-gray-800">📋 칭찬 목록</h2>
+                <Button variant="secondary" size="sm" onClick={load} disabled={loading}>🔄 새로고침</Button>
+              </div>
+              <ErrorBanner message={error} onRetry={load} onDismiss={() => setError('')} />
+              {loading ? (
+                <Spinner label="칭찬을 불러오는 중..." />
+              ) : items.length === 0 && !error ? (
+                <EmptyState emoji="🕊️" text="아직 칭찬이 없어요. 첫 번째 따뜻한 한마디를 남겨보세요!" />
+              ) : (
+                <div className="grid gap-4">
+                  {items.map((it) => (
+                    <PraiseCard key={it.id} item={it} onReact={handleReact} onDelete={handleDelete} reacting={reactingId === it.id} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <footer className="mt-12 text-center text-xs text-gray-300">💌 익명 칭찬 게시판 · 따뜻한 말 한마디</footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
