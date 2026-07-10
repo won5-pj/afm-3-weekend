@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>멍스데이 · 사장님 대시보드</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%B6%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <style>
+    :root { --cream: #FBF7F1; --peach: #F59E0B; }
+    body { background: var(--cream); font-family: 'Apple SD Gothic Neo', Pretendard, 'Malgun Gothic', -apple-system, BlinkMacSystemFont, sans-serif; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: #e5ddd2; border-radius: 8px; }
+    .fade-in { animation: fade .4s ease both; }
+    @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .spin { animation: sp 1s linear infinite; } @keyframes sp { to { transform: rotate(360deg); } }
+    .grow-bar { transition: height .6s cubic-bezier(.2,.8,.2,1); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useCallback } = React;
+
+    const won = (n) => (Number(n) || 0).toLocaleString("ko-KR") + "원";
+
+    // ---------- 알림 심각도 (색상/아이콘) ----------
+    const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+    const SEV = {
+      critical: { icon: "🔴", tag: "긴급", chip: "bg-red-100 text-red-700", row: "border-red-400 bg-red-50" },
+      warning:  { icon: "🟠", tag: "주의", chip: "bg-orange-100 text-orange-700", row: "border-orange-300 bg-orange-50" },
+      party:    { icon: "🎉", tag: "파티", chip: "bg-pink-100 text-pink-700", row: "border-pink-300 bg-pink-50" },
+      birthday: { icon: "🎂", tag: "생일", chip: "bg-pink-100 text-pink-700", row: "border-pink-300 bg-pink-50" },
+    };
+    function todoUrgency(t) {
+      if (t.done) return null;
+      if (/임박|긴급|오늘|부족/.test(t.title)) return "critical";
+      if (t.category === "발주" || t.category === "예약") return "warning";
+      return null;
+    }
+    function buildAlerts(data) {
+      if (!data) return [];
+      const anchor = data.anchor, out = [], seen = new Set();
+      [...data.inventory.lowStock, ...data.inventory.expiring].forEach((i) => {
+        if (seen.has(i.name)) return; seen.add(i.name);
+        const d = i.expiry ? daysBetween(anchor, i.expiry) : null;
+        const soon = d != null && d <= 2;
+        let level, reason;
+        if (i.low && soon) { level = "critical"; reason = `재고 부족 · 유통기한 D-${d}`; }
+        else if (soon) { level = "critical"; reason = `유통기한 임박 D-${d}`; }
+        else if (i.low) { level = "warning"; reason = `재고 부족 ${i.stock}/${i.reorder}${i.unit}`; }
+        else { level = "warning"; reason = `유통기한 ${i.expiry && i.expiry.slice(5)}`; }
+        out.push({ level, title: i.name, reason, sort: level === "critical" ? 0 : 2 });
+      });
+      data.reservations.forEach((r) => {
+        if (r.days_until <= 1) out.push({ level: "party", title: `${r.pet_name} 생일파티`, reason: r.days_until === 0 ? "오늘 진행!" : "내일 예정", sort: r.days_until === 0 ? 1 : 3 });
+      });
+      data.birthdays.forEach((b) => {
+        if (b.days_until <= 3) out.push({ level: "birthday", title: `${b.pet_name} 생일 D-${b.days_until}`, reason: `${b.owner_name}님 · ${b.breed}`, sort: 4 });
+      });
+      return out.sort((a, b) => a.sort - b.sort);
+    }
+
+    // ---------- API (Bearer token) ----------
+    const TOKEN_KEY = "mongsday_token";
+    const getToken = () => sessionStorage.getItem(TOKEN_KEY) || "";
+    const authHeaders = (extra = {}) => {
+      const t = getToken();
+      return t ? { ...extra, Authorization: "Bearer " + t } : extra;
+    };
+    let onAuthFail = () => {};
+    async function jget(url) {
+      const r = await fetch(url, { headers: authHeaders() });
+      if (r.status === 401) { onAuthFail(); throw new Error("unauthorized"); }
+      return r.json();
+    }
+    const api = {
+      login: (id, pw) =>
+        fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, pw }) }).then((r) => r.json()),
+      data: () => jget("/api/data"),
+      weather: () => jget("/api/weather"),
+      todos: () => jget("/api/todos"),
+      briefing: () => jget("/api/briefing"),
+      toggleTodo: (id, done) =>
+        fetch("/api/todos", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ id, done }),
+        }).then((r) => r.json()),
+    };
+
+    // ---------- Small UI atoms ----------
+    const Card = ({ className = "", children }) => (
+      <div className={"bg-white rounded-2xl border border-amber-100/80 shadow-sm shadow-amber-900/5 " + className}>{children}</div>
+    );
+    const CardHead = ({ icon, title, tag, right }) => (
+      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-amber-50">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{icon}</span>
+          <h2 className="font-bold text-slate-800">{title}</h2>
+          {tag && <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">{tag}</span>}
+        </div>
+        {right}
+      </div>
+    );
+    const Spinner = ({ label }) => (
+      <div className="flex items-center gap-2 text-slate-400 text-sm py-8 justify-center">
+        <svg className="spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity=".25" strokeWidth="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/></svg>
+        {label || "불러오는 중..."}
+      </div>
+    );
+
+    // ---------- Login ----------
+    function Login({ onOk }) {
+      const [id, setId] = useState("");
+      const [pw, setPw] = useState("");
+      const [err, setErr] = useState("");
+      const [loading, setLoading] = useState(false);
+      const submit = async (e) => {
+        e.preventDefault();
+        setErr(""); setLoading(true);
+        try {
+          const res = await api.login(id, pw);
+          if (res && res.token) {
+            sessionStorage.setItem(TOKEN_KEY, res.token);
+            onOk();
+          } else setErr((res && res.error) || "아이디 또는 비밀번호가 올바르지 않습니다.");
+        } catch {
+          setErr("로그인 요청에 실패했어요. 잠시 후 다시 시도해주세요.");
+        } finally { setLoading(false); }
+      };
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <form onSubmit={submit} className="fade-in w-full max-w-sm bg-white rounded-3xl shadow-xl shadow-amber-900/10 border border-amber-100 p-8">
+            <div className="text-center mb-6">
+              <div className="text-5xl mb-2">🐶🎂</div>
+              <h1 className="text-2xl font-extrabold text-slate-800">멍스데이 대시보드</h1>
+              <p className="text-sm text-slate-400 mt-1">청라 반려견 생일파티 카페 · 사장님 전용</p>
+            </div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">관리자 아이디</label>
+            <input value={id} onChange={(e) => setId(e.target.value)} placeholder="admin" autoFocus
+              className="w-full mb-3 px-4 py-3 rounded-xl bg-amber-50/60 border border-amber-100 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none" />
+            <label className="block text-xs font-semibold text-slate-500 mb-1">비밀번호</label>
+            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="••••••"
+              className="w-full mb-4 px-4 py-3 rounded-xl bg-amber-50/60 border border-amber-100 focus:border-amber-400 focus:ring-2 focus:ring-amber-200 outline-none" />
+            {err && <p className="text-sm text-red-500 mb-3">⚠️ {err}</p>}
+            <button disabled={loading} className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-[.99] transition text-white font-bold shadow-lg shadow-amber-500/30 disabled:opacity-60">
+              {loading ? "확인 중..." : "로그인"}
+            </button>
+            <p className="text-center text-[11px] text-slate-300 mt-4">사장님만 접근 가능한 관리자 대시보드입니다</p>
+          </form>
+        </div>
+      );
+    }
+
+    // ---------- Dashboard cards ----------
+    function AlertsCard({ data }) {
+      if (!data) return (
+        <Card className="border-l-4 border-l-slate-200"><CardHead icon="🔔" title="오늘 꼭 챙길 것" /><Spinner /></Card>
+      );
+      const alerts = buildAlerts(data);
+      const crit = alerts.filter((a) => a.level === "critical").length;
+      return (
+        <Card className={"fade-in border-l-4 " + (crit ? "border-l-red-400" : "border-l-amber-300")}>
+          <CardHead icon="🔔" title="오늘 꼭 챙길 것" tag={alerts.length + "건"}
+            right={crit > 0
+              ? <span className="text-xs font-bold text-red-600">🔴 긴급 {crit}건</span>
+              : <span className="text-xs font-semibold text-green-600">긴급 없음 👍</span>} />
+          <div className="px-4 py-3 grid sm:grid-cols-2 gap-2">
+            {alerts.length === 0 && <p className="text-sm text-slate-400 px-1 py-2 col-span-full">특별히 급한 알림이 없어요 👍</p>}
+            {alerts.map((a, i) => {
+              const s = SEV[a.level];
+              return (
+                <div key={i} className={"flex items-center gap-2.5 rounded-xl border-l-4 px-3 py-2 " + s.row}>
+                  <span className="text-lg shrink-0">{s.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-slate-700 truncate">{a.title}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{a.reason}</div>
+                  </div>
+                  <span className={"text-[10px] font-bold rounded-full px-2 py-0.5 shrink-0 " + s.chip}>{s.tag}</span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      );
+    }
+
+    const catColor = {
+      "발주": "bg-orange-100 text-orange-700", "운영": "bg-blue-100 text-blue-700",
+      "예약": "bg-pink-100 text-pink-700", "마케팅": "bg-green-100 text-green-700",
+    };
+    function TodoCard({ todos, onToggle }) {
+      if (!todos) return <Card><CardHead icon="✅" title="오늘 할일" tag="Notion 연동" /><Spinner /></Card>;
+      const remaining = todos.filter((t) => !t.done).length;
+      return (
+        <Card className="fade-in">
+          <CardHead icon="✅" title="오늘 할일" tag="Notion 연동"
+            right={<span className="text-xs text-slate-400">{remaining}건 남음</span>} />
+          <ul className="p-3 space-y-1 max-h-[300px] overflow-auto">
+            {todos.map((t) => {
+              const u = todoUrgency(t);
+              const accent = u === "critical" ? "border-l-4 border-red-400" : u === "warning" ? "border-l-4 border-orange-300" : "border-l-4 border-transparent";
+              return (
+              <li key={t.id}>
+                <button onClick={() => onToggle(t)}
+                  className={"w-full text-left flex items-start gap-3 pl-2.5 pr-3 py-2.5 rounded-xl hover:bg-amber-50/70 transition " + accent + (t.done ? " opacity-50" : "")}>
+                  <span className={"mt-0.5 w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center text-xs " + (t.done ? "bg-amber-500 border-amber-500 text-white" : "border-slate-300")}>{t.done ? "✓" : ""}</span>
+                  <span className="flex-1">
+                    <span className={"text-sm " + (t.done ? "line-through text-slate-400" : "text-slate-700")}>
+                      {u && !t.done && <span className="mr-1">{u === "critical" ? "🔴" : "🟠"}</span>}
+                      {t.title}
+                    </span>
+                    {t.memo ? <span className="block text-[11px] text-slate-400 mt-0.5">{t.memo}</span> : null}
+                  </span>
+                  <span className={"text-[10px] font-semibold rounded-full px-2 py-0.5 shrink-0 " + (catColor[t.category] || "bg-slate-100 text-slate-500")}>{t.category}</span>
+                </button>
+              </li>
+              );
+            })}
+          </ul>
+        </Card>
+      );
+    }
+
+    function BriefingCard({ brief, loading, onRegen }) {
+      return (
+        <Card className="fade-in bg-gradient-to-br from-amber-50 to-white">
+          <CardHead icon="🤖" title="오늘의 카페 브리핑"
+            tag={brief ? (brief.ai ? "Gemini AI" : "자동요약") : "AI"}
+            right={
+              <button onClick={onRegen} disabled={loading}
+                className="text-xs font-semibold text-amber-700 hover:text-amber-900 disabled:opacity-40 flex items-center gap-1">
+                <span className={loading ? "spin inline-block" : ""}>↻</span> 다시 생성
+              </button>
+            } />
+          <div className="px-5 py-4 min-h-[140px]">
+            {loading && !brief ? <Spinner label="AI가 데이터를 분석하고 있어요..." /> : (
+              <p className="text-[15px] leading-7 text-slate-700 whitespace-pre-line">{brief?.briefing || "브리핑을 불러오지 못했어요."}</p>
+            )}
+            {brief && (
+              <p className="text-[11px] text-slate-400 mt-3">
+                {brief.model} · {new Date(brief.generatedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })} 생성
+              </p>
+            )}
+          </div>
+        </Card>
+      );
+    }
+
+    function StrategyCard({ brief, loading }) {
+      const strat = brief && brief.strategy;
+      return (
+        <div className="fade-in rounded-2xl p-5 bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-white flex items-center gap-2">
+              💡 오늘의 경영 전략
+              <span className="text-[11px] font-semibold bg-white/20 rounded-full px-2 py-0.5">AI 추천</span>
+            </h2>
+            {brief && !brief.ai && <span className="text-[11px] text-white/70">자동 요약</span>}
+          </div>
+          {!strat && loading ? (
+            <div className="text-white/80 text-sm py-3">전략을 분석하고 있어요...</div>
+          ) : strat && strat.length ? (
+            <div className="grid sm:grid-cols-3 gap-3">
+              {strat.map((s, i) => (
+                <div key={i} className="rounded-xl bg-white/15 px-3.5 py-3">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="w-5 h-5 rounded-full bg-white/25 flex items-center justify-center text-[11px] font-bold">{i + 1}</span>
+                    <span className="text-[11px] font-semibold text-white/80">전략</span>
+                  </div>
+                  <div className="text-sm leading-6 font-medium">{s}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-white/80 text-sm py-2">전략을 불러오지 못했어요.</div>
+          )}
+        </div>
+      );
+    }
+
+    function SalesCard({ data }) {
+      if (!data) return <Card><CardHead icon="📊" title="이번 주 매출" tag="DB 연동" /><Spinner /></Card>;
+      const max = Math.max(...data.week.map((w) => w.amount), 1);
+      const wow = data.weekChangePct;
+      return (
+        <Card className="fade-in">
+          <CardHead icon="📊" title="이번 주 매출" tag="DB 연동"
+            right={<div className="text-right">
+              <div className="font-extrabold text-slate-800">{data.weekTotalLabel}</div>
+              {wow != null && <div className={"text-xs font-semibold " + (wow >= 0 ? "text-green-600" : "text-red-500")}>{wow >= 0 ? "▲" : "▼"} 지난주比 {Math.abs(wow)}%</div>}
+            </div>} />
+          <div className="px-5 py-4">
+            <div className="flex items-end justify-between gap-2 h-40">
+              {data.week.map((w, i) => {
+                const h = w.future ? 0 : Math.max(6, Math.round((w.amount / max) * 130));
+                const isPeak = !w.future && w.amount === max;
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center justify-end gap-1 h-full">
+                    <span className="text-[10px] text-slate-400">{w.future ? "" : w.amountLabel}</span>
+                    <div className={"grow-bar w-full rounded-t-lg " + (w.future ? "bg-slate-100" : isPeak ? "bg-amber-500" : "bg-amber-300")}
+                      style={{ height: (w.future ? 8 : h) + "px" }} title={w.date}></div>
+                    <span className={"text-xs font-semibold " + (isPeak ? "text-amber-700" : "text-slate-500")}>{w.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-3 pt-3 border-t border-amber-50 flex justify-between text-xs text-slate-500">
+              <span>이번 달 누계 <b className="text-slate-700">{data.monthRevenueLabel}</b></span>
+              <span>데이터 기준 {data.anchor}</span>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    function TopMenuCard({ data }) {
+      if (!data) return <Card><CardHead icon="🏆" title="인기 메뉴 TOP3" tag="DB 연동" /><Spinner /></Card>;
+      const medal = ["🥇", "🥈", "🥉"];
+      const top = data.topMenus.slice(0, 3);
+      const max = Math.max(...top.map((m) => m.qty), 1);
+      const catEmoji = { "음료": "☕", "브런치": "🍳", "펫베이커리": "🐾", "생일파티": "🎉" };
+      return (
+        <Card className="fade-in">
+          <CardHead icon="🏆" title="인기 메뉴 TOP3" tag="DB 연동" right={<span className="text-xs text-slate-400">최근 7일</span>} />
+          <ul className="px-5 py-4 space-y-3">
+            {top.map((m, i) => (
+              <li key={m.name}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-slate-700 text-sm">{medal[i]} {catEmoji[m.category] || ""} {m.name}</span>
+                  <span className="text-sm font-bold text-slate-800">{m.qty}<span className="text-xs text-slate-400 font-normal">개</span></span>
+                </div>
+                <div className="h-2 rounded-full bg-amber-50 overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 grow-bar" style={{ width: Math.round((m.qty / max) * 100) + "%" }}></div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      );
+    }
+
+    function WeatherCard({ weather }) {
+      if (!weather) return <Card><CardHead icon="🌤️" title="날씨 · 손님 예측" /><Spinner /></Card>;
+      const emoji = { Clear: "☀️", Clouds: "☁️", Rain: "🌧️", Drizzle: "🌦️", Snow: "❄️", Thunderstorm: "⛈️", Mist: "🌫️", Fog: "🌫️", Haze: "🌫️" }[weather.main] || "🌡️";
+      const lv = { up: "text-green-600 bg-green-50", down: "text-red-500 bg-red-50", flat: "text-slate-500 bg-slate-50" }[weather.prediction.level];
+      return (
+        <Card className="fade-in">
+          <CardHead icon="🌤️" title="날씨 · 손님 예측" tag="날씨 API" />
+          <div className="px-5 py-4">
+            <div className="flex items-center gap-3">
+              <span className="text-4xl">{emoji}</span>
+              <div>
+                <div className="text-2xl font-extrabold text-slate-800">{weather.temp}°C <span className="text-sm font-medium text-slate-400">{weather.description}</span></div>
+                <div className="text-xs text-slate-400">{weather.city} · 강수확률 {weather.pop}% · 습도 {weather.humidity}%</div>
+              </div>
+            </div>
+            <div className={"mt-3 rounded-xl px-3 py-2.5 " + lv}>
+              <div className="text-sm font-bold">{weather.prediction.label}</div>
+              <div className="text-xs mt-0.5 opacity-90">{weather.prediction.note}</div>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
+    function InventoryCard({ data }) {
+      if (!data) return <Card><CardHead icon="📦" title="재고 발주 알림" /><Spinner /></Card>;
+      const anchor = data.anchor;
+      const merged = [];
+      const seen = new Set();
+      [...data.inventory.lowStock, ...data.inventory.expiring].forEach((i) => {
+        if (seen.has(i.name)) return; seen.add(i.name);
+        const d = i.expiry ? daysBetween(anchor, i.expiry) : null;
+        const soon = d != null && d <= 2;
+        const level = soon || (i.low && soon) ? "critical" : "warning";
+        merged.push({ ...i, level, daysLeft: d });
+      });
+      merged.sort((a, b) => (a.level === "critical" ? 0 : 1) - (b.level === "critical" ? 0 : 1));
+      const critCount = merged.filter((m) => m.level === "critical").length;
+      return (
+        <Card className="fade-in">
+          <CardHead icon="📦" title="재고 발주 알림" tag="DB 연동"
+            right={<span className={"text-xs font-bold " + (critCount ? "text-red-600" : "text-orange-600")}>{critCount ? `🔴 긴급 ${critCount}건` : `${merged.length}건`}</span>} />
+          <div className="px-4 py-3 space-y-1.5 max-h-[240px] overflow-auto">
+            {merged.length === 0 && <p className="text-sm text-slate-400 px-1">모든 재고가 충분해요 👍</p>}
+            {merged.map((i) => (
+              <div key={i.name} className={"flex items-center gap-2 text-sm rounded-lg border-l-4 px-2.5 py-1.5 " + SEV[i.level].row}>
+                <span className="shrink-0">{SEV[i.level].icon}</span>
+                <span className="text-slate-700 flex-1 truncate">{i.name}</span>
+                {i.low && <span className={"text-[11px] font-bold " + (i.level === "critical" ? "text-red-600" : "text-orange-600")}>{i.stock}/{i.reorder}{i.unit}</span>}
+                {i.daysLeft != null && i.daysLeft <= 4 && (
+                  <span className={"text-[10px] font-semibold rounded-full px-1.5 py-0.5 shrink-0 " + (i.daysLeft <= 2 ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-700")}>⏰ D-{i.daysLeft}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      );
+    }
+
+    function PartyCard({ data }) {
+      if (!data) return <Card><CardHead icon="🎉" title="다가오는 생일파티" /><Spinner /></Card>;
+      const stColor = { "확정": "bg-green-100 text-green-700", "문의": "bg-yellow-100 text-yellow-700", "완료": "bg-slate-100 text-slate-500" };
+      return (
+        <Card className="fade-in">
+          <CardHead icon="🎉" title="다가오는 생일파티" tag="예약" right={<span className="text-xs text-slate-400">{data.reservations.length}건</span>} />
+          <ul className="px-5 py-4 space-y-2.5 max-h-[240px] overflow-auto">
+            {data.reservations.length === 0 && <p className="text-sm text-slate-400">예정된 파티가 없어요.</p>}
+            {data.reservations.map((r, i) => (
+              <li key={i} className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-700">🐕 {r.pet_name} <span className="text-xs font-normal text-slate-400">· {r.package_name.replace("생일파티 ", "")}</span></div>
+                  <div className="text-[11px] text-slate-400">{r.date}{r.days_until === 0 ? " (오늘!)" : r.days_until > 0 ? ` (D-${r.days_until})` : ""} · {won(r.amount)}</div>
+                </div>
+                <span className={"text-[10px] font-semibold rounded-full px-2 py-0.5 " + (stColor[r.status] || "bg-slate-100 text-slate-500")}>{r.status}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      );
+    }
+
+    function BirthdayCard({ data }) {
+      if (!data) return <Card><CardHead icon="🎂" title="생일 임박 멍멍이" /><Spinner /></Card>;
+      return (
+        <Card className="fade-in">
+          <CardHead icon="🎂" title="생일 임박 멍멍이" tag="CRM" right={<span className="text-xs text-slate-400">30일 이내</span>} />
+          <ul className="px-5 py-4 space-y-2 max-h-[240px] overflow-auto">
+            {data.birthdays.length === 0 && <p className="text-sm text-slate-400">임박한 생일이 없어요.</p>}
+            {data.birthdays.map((b, i) => (
+              <li key={i} className="flex items-center justify-between text-sm">
+                <span className="text-slate-700">🐩 {b.pet_name} <span className="text-xs text-slate-400">· {b.breed} · {b.owner_name}님</span></span>
+                <span className={"font-bold " + (b.days_until <= 3 ? "text-pink-600" : "text-slate-500")}>{b.days_until === 0 ? "오늘 🎉" : "D-" + b.days_until}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      );
+    }
+
+    // ---------- Dashboard ----------
+    function Stat({ label, value, sub, tone = "text-slate-800" }) {
+      return (
+        <div className="bg-white rounded-2xl border border-amber-100/80 px-4 py-3 shadow-sm shadow-amber-900/5">
+          <div className="text-[11px] text-slate-400 font-medium">{label}</div>
+          <div className={"text-xl font-extrabold " + tone}>{value}</div>
+          {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+        </div>
+      );
+    }
+
+    function Dashboard({ onLogout }) {
+      const [data, setData] = useState(null);
+      const [weather, setWeather] = useState(null);
+      const [todos, setTodos] = useState(null);
+      const [brief, setBrief] = useState(null);
+      const [briefLoading, setBriefLoading] = useState(true);
+      const [err, setErr] = useState("");
+
+      const loadBrief = useCallback(() => {
+        setBriefLoading(true);
+        api.briefing().then(setBrief).catch(() => setBrief({ briefing: "브리핑을 불러오지 못했어요." })).finally(() => setBriefLoading(false));
+      }, []);
+
+      const loadAll = useCallback(() => {
+        api.data().then((d) => { if (d.error) setErr(d.error); else setData(d); }).catch((e) => setErr(String(e)));
+        api.weather().then((w) => !w.error && setWeather(w)).catch(() => {});
+        api.todos().then((t) => setTodos(t.todos || [])).catch(() => {});
+        loadBrief();
+      }, [loadBrief]);
+
+      useEffect(() => { loadAll(); }, [loadAll]);
+
+      const toggleTodo = (t) => {
+        const next = todos.map((x) => (x.id === t.id ? { ...x, done: !x.done } : x));
+        setTodos(next);
+        // persists to Notion (string page id) or Supabase mirror (number id)
+        api.toggleTodo(t.id, !t.done).catch(() => {});
+      };
+
+      const today = new Date().toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+
+      return (
+        <div className="min-h-screen">
+          {/* Header */}
+          <header className="sticky top-0 z-10 bg-cream/90 backdrop-blur border-b border-amber-100" style={{ background: "rgba(251,247,241,.9)" }}>
+            <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+              <div>
+                <h1 className="text-lg sm:text-xl font-extrabold text-slate-800">🐶 좋은 아침, 멍스데이 사장님!</h1>
+                <p className="text-[11px] sm:text-xs text-slate-400">{today} · 청라 반려견 생일파티 카페</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={loadAll} className="text-sm px-3 py-2 rounded-xl bg-white border border-amber-100 text-slate-500 hover:text-amber-700 hover:border-amber-300 transition">↻ 새로고침</button>
+                <button onClick={onLogout} className="text-sm px-3 py-2 rounded-xl bg-white border border-amber-100 text-slate-500 hover:text-red-500 hover:border-red-200 transition">로그아웃</button>
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-6xl mx-auto px-4 py-5 space-y-5">
+            {err && <div className="bg-red-50 border border-red-200 text-red-600 rounded-xl px-4 py-3 text-sm">⚠️ {err}</div>}
+
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat label="어제 매출" value={data ? data.yesterday.amountLabel : "…"}
+                sub={data && data.yesterday.changePct != null ? `전일比 ${data.yesterday.changePct > 0 ? "+" : ""}${data.yesterday.changePct}% · 주문 ${data.yesterday.orders}건` : ""}
+                tone={data && data.yesterday.changePct >= 0 ? "text-green-600" : "text-slate-800"} />
+              <Stat label="이번 주 누계" value={data ? data.weekTotalLabel : "…"} sub={data && data.weekChangePct != null ? `지난주比 ${data.weekChangePct > 0 ? "+" : ""}${data.weekChangePct}%` : ""} />
+              <Stat label="이번 달 누계" value={data ? data.monthRevenueLabel : "…"} sub="당월 매출" />
+              <Stat label="단골 멍멍이" value={data ? data.pets.total + "마리" : "…"} sub={data ? `누적 방문 ${data.pets.total_visits}회` : ""} />
+            </div>
+
+            {/* 오늘 꼭 챙길 것 (색상 태그 알림) */}
+            <AlertsCard data={data} />
+
+            {/* 할일 + AI 브리핑 */}
+            <div className="grid lg:grid-cols-2 gap-5">
+              <TodoCard todos={todos} onToggle={toggleTodo} />
+              <BriefingCard brief={brief} loading={briefLoading} onRegen={loadBrief} />
+            </div>
+
+            {/* 경영 전략 (강조) */}
+            <StrategyCard brief={brief} loading={briefLoading} />
+
+            {/* 이번 주 매출 + 인기 메뉴 */}
+            <div className="grid lg:grid-cols-2 gap-5">
+              <SalesCard data={data} />
+              <TopMenuCard data={data} />
+            </div>
+
+            {/* Secondary insights */}
+            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-5">
+              <WeatherCard weather={weather} />
+              <InventoryCard data={data} />
+              <PartyCard data={data} />
+              <BirthdayCard data={data} />
+            </div>
+
+            <footer className="text-center text-[11px] text-slate-300 py-6">
+              멍스데이(Mongsday) 사장님 대시보드 · Notion · Supabase · OpenWeatherMap · Gemini 연동
+            </footer>
+          </main>
+        </div>
+      );
+    }
+
+    function App() {
+      const [authed, setAuthed] = useState(!!sessionStorage.getItem(TOKEN_KEY));
+      useEffect(() => {
+        onAuthFail = () => { sessionStorage.removeItem(TOKEN_KEY); setAuthed(false); };
+      }, []);
+      const logout = () => { sessionStorage.removeItem(TOKEN_KEY); setAuthed(false); };
+      return authed ? <Dashboard onLogout={logout} /> : <Login onOk={() => setAuthed(true)} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
