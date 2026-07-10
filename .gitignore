@@ -14,3 +14,11 @@ node_modules/
 
 # Logs
 *.log
+
+# Supabase MCP config (개인 액세스 토큰 포함 - 커밋 금지)
+.mcp.json
+
+supabase-token.txt
+
+# Playwright MCP 브라우저 자동화 잔여물 (스냅샷/스크린샷/콘솔로그)
+.playwright-mcp/

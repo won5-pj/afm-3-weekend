@@ -1,0 +1,44 @@
+{
+  "expectations": [
+    {
+      "text": "레시피 .md 파일이 outputs/에 최소 1개 생성되었다",
+      "passed": true,
+      "evidence": "md 파일 존재: tuna-mayo-rice-bowl.md"
+    },
+    {
+      "text": "썸네일이 .md의 첫 콘텐츠 줄에 ![...](./thumbnails/<name>.png) 형식으로 참조된다",
+      "passed": true,
+      "evidence": "첫 줄: ![thumbnail](./thumbnails/tuna-mayo-rice-bowl.png)"
+    },
+    {
+      "text": "참조된 썸네일 .png 파일이 실제로 존재하고 크기가 10KB를 넘는다",
+      "passed": true,
+      "evidence": "./thumbnails/tuna-mayo-rice-bowl.png = 325,991 bytes"
+    },
+    {
+      "text": "레시피 .md 파일명이 영어 소문자 kebab-case이다 (한글·공백·대문자 없음)",
+      "passed": true,
+      "evidence": "파일명 OK: tuna-mayo-rice-bowl.md"
+    },
+    {
+      "text": "레시피 본문이 한국어(한글 포함)로 작성되었다",
+      "passed": true,
+      "evidence": "한글 본문 확인"
+    },
+    {
+      "text": "조리시간이 명시되어 있고 15분 이하이다",
+      "passed": true,
+      "evidence": "분 표기: [7] → 최소 7분"
+    },
+    {
+      "text": "참치캔을 주재료로 사용하고 한 그릇(one-bowl) 요리이다",
+      "passed": true,
+      "evidence": "참치:true 한그릇형:true"
+    },
+    {
+      "text": "설거지를 줄이는 팁이 최소 1개 포함되어 있다",
+      "passed": true,
+      "evidence": "설거지 팁 있음"
+    }
+  ]
+}

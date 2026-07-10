@@ -1,0 +1,44 @@
+{
+  "expectations": [
+    {
+      "text": "레시피 .md 파일이 outputs/에 최소 1개 생성되었다",
+      "passed": true,
+      "evidence": "md 파일 존재: kimchi-fried-rice.md"
+    },
+    {
+      "text": "썸네일이 .md의 첫 콘텐츠 줄에 ![...](./thumbnails/<name>.png) 형식으로 참조된다",
+      "passed": true,
+      "evidence": "첫 줄: ![thumbnail](./thumbnails/kimchi-fried-rice.png)"
+    },
+    {
+      "text": "참조된 썸네일 .png 파일이 실제로 존재하고 크기가 10KB를 넘는다",
+      "passed": true,
+      "evidence": "./thumbnails/kimchi-fried-rice.png = 283,976 bytes"
+    },
+    {
+      "text": "레시피 .md 파일명이 영어 소문자 kebab-case이다 (한글·공백·대문자 없음)",
+      "passed": true,
+      "evidence": "파일명 OK: kimchi-fried-rice.md"
+    },
+    {
+      "text": "레시피 본문이 한국어(한글 포함)로 작성되었다",
+      "passed": true,
+      "evidence": "한글 본문 확인"
+    },
+    {
+      "text": "조리시간이 명시되어 있고 15분 이하이다",
+      "passed": true,
+      "evidence": "분 표기: [10, 3, 4] → 최소 3분"
+    },
+    {
+      "text": "주재료가 계란·김치·밥 중심이다 (사용자가 말하지 않은 고기 등 새 주재료를 억지로 넣지 않음)",
+      "passed": true,
+      "evidence": "계란:true 김치:true 밥:true (외부주재료흔적:false)"
+    },
+    {
+      "text": "설거지를 줄이는 팁이 최소 1개 포함되어 있다",
+      "passed": true,
+      "evidence": "설거지 팁 있음"
+    }
+  ]
+}

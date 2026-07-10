@@ -1,0 +1,8 @@
+node_modules
+package.json
+package-lock.json
+seed.js
+schema.sql
+README.md
+*.png
+.playwright-mcp

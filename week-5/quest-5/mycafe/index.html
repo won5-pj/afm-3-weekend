@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>멍스데이 · AI 운영 파트너</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐶</text></svg>" />
+
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1f2430; --muted:#7c869b;
+    --line:#eaecf3; --accent:#ff8a3d; --accent-soft:#fff1e7;
+    --good:#1eae72; --warn:#e6533c; --blue:#3a7afe; --blue-soft:#eef3ff;
+    --shadow:0 6px 24px rgba(30,40,70,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px; margin:0 auto; padding:22px 18px 60px;}
+  /* 헤더 */
+  header.top{display:flex; align-items:center; gap:14px; margin-bottom:6px;}
+  .logo{width:46px;height:46px;border-radius:14px;background:var(--accent-soft);
+    display:grid;place-items:center;font-size:26px;flex:none;}
+  header.top h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.3px;}
+  header.top .sub{color:var(--muted);font-size:13px;margin-top:2px;}
+  .badge{margin-left:auto;background:var(--blue-soft);color:var(--blue);
+    font-size:12px;font-weight:700;padding:6px 11px;border-radius:999px;}
+  .slogan{color:var(--accent);font-weight:700;}
+  /* 레이아웃 */
+  .grid{display:grid;grid-template-columns:1.25fr .95fr;gap:16px;margin-top:18px;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  .col{display:flex;flex-direction:column;gap:16px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;
+    box-shadow:var(--shadow);}
+  .card .hd{padding:14px 18px;border-bottom:1px solid var(--line);
+    font-weight:800;font-size:14px;display:flex;align-items:center;gap:8px;}
+  .card .hd .tag{margin-left:auto;font-weight:600;font-size:12px;color:var(--muted);}
+  .card .bd{padding:16px 18px;}
+  /* KPI */
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  @media(max-width:520px){.kpis{grid-template-columns:repeat(2,1fr);}}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:14px;box-shadow:var(--shadow);}
+  .kpi .k{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px;}
+  .kpi .v{font-size:20px;font-weight:800;letter-spacing:-.4px;}
+  .kpi .d{font-size:11.5px;margin-top:4px;color:var(--muted);}
+  .kpi .d.up{color:var(--good);} .kpi .d.down{color:var(--warn);}
+  .kpi.alert{background:linear-gradient(180deg,#fff,#fff6f4);border-color:#ffd9d0;}
+  /* 리스트 패널 */
+  .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px dashed var(--line);font-size:13.5px;}
+  .row:last-child{border-bottom:none;}
+  .row .em{font-size:18px;flex:none;}
+  .row .grow{flex:1;min-width:0;}
+  .row .t{font-weight:700;}
+  .row .s{color:var(--muted);font-size:12px;margin-top:1px;}
+  .pill{font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap;}
+  .pill.ok{background:#e9f8f1;color:var(--good);}
+  .pill.ask{background:var(--blue-soft);color:var(--blue);}
+  .pill.hot{background:var(--accent-soft);color:var(--accent);}
+  .pill.dan{background:#fdece8;color:var(--warn);}
+  .empty{color:var(--muted);font-size:13px;padding:8px 0;}
+  /* 채팅 */
+  .chat{display:flex;flex-direction:column;height:560px;}
+  .msgs{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:12px;}
+  .msg{max-width:88%;padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.6;white-space:pre-wrap;word-break:break-word;}
+  .msg.ai{background:#f4f6fb;border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px;}
+  .msg.me{background:var(--accent);color:#fff;align-self:flex-end;border-bottom-right-radius:4px;}
+  .msg.ai .who{font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px;}
+  .typing{align-self:flex-start;color:var(--muted);font-size:13px;padding:4px 6px;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 18px 4px;}
+  .chip{background:#fff;border:1px solid var(--line);border-radius:999px;
+    padding:7px 12px;font-size:12.5px;color:var(--ink);cursor:pointer;transition:.15s;}
+  .chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .composer{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--line);}
+  .composer input{flex:1;border:1px solid var(--line);border-radius:12px;
+    padding:12px 14px;font-size:14px;outline:none;}
+  .composer input:focus{border-color:var(--accent);}
+  .composer button{background:var(--accent);color:#fff;border:none;border-radius:12px;
+    padding:0 18px;font-weight:800;font-size:14px;cursor:pointer;}
+  .composer button:disabled{opacity:.5;cursor:default;}
+  .footnote{color:var(--muted);font-size:11.5px;text-align:center;margin-top:22px;line-height:1.6;}
+  .spark{display:flex;align-items:flex-end;gap:4px;height:44px;margin-top:4px;}
+  .spark .b{flex:1;background:var(--accent-soft);border-radius:4px 4px 0 0;min-height:4px;}
+  .spark .b.max{background:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo">🐶</div>
+    <div>
+      <h1 id="cafeName">멍스데이 · AI 운영 파트너</h1>
+      <div class="sub" id="cafeConcept">내 카페를 잘 아는 AI 파트너</div>
+    </div>
+    <div class="badge">LIVE · Supabase</div>
+  </header>
+  <div class="sub" style="margin-left:60px;margin-top:-2px;">
+    <span class="slogan" id="cafeSlogan"></span>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpis" id="kpis" style="margin-top:18px;">
+    <div class="kpi"><div class="k">이번 달 매출</div><div class="v">—</div></div>
+    <div class="kpi"><div class="k">객단가</div><div class="v">—</div></div>
+    <div class="kpi"><div class="k">다가오는 생일파티</div><div class="v">—</div></div>
+    <div class="kpi"><div class="k">이번 달 생일견</div><div class="v">—</div></div>
+    <div class="kpi"><div class="k">단골 회원견</div><div class="v">—</div></div>
+    <div class="kpi alert"><div class="k">재고 경고</div><div class="v">—</div></div>
+  </div>
+
+  <div class="grid">
+    <!-- 왼쪽: 채팅 -->
+    <div class="col">
+      <div class="card chat">
+        <div class="hd">💬 운영 파트너에게 물어보기 <span class="tag">my_cafe.md + 실시간 DB 결합</span></div>
+        <div class="msgs" id="msgs"></div>
+        <div class="chips" id="chips"></div>
+        <div class="composer">
+          <input id="input" placeholder="예: 이번 달 매출 어때? / 다가오는 생일파티 정리해줘" autocomplete="off" />
+          <button id="send">보내기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 오른쪽: 운영 패널 -->
+    <div class="col">
+      <div class="card">
+        <div class="hd">📈 최근 7일 매출</div>
+        <div class="bd"><div class="spark" id="spark"></div>
+          <div class="sub" id="sparkNote" style="margin-top:8px;"></div></div>
+      </div>
+      <div class="card">
+        <div class="hd">🎂 다가오는 생일파티</div>
+        <div class="bd" id="resPanel"><div class="empty">불러오는 중…</div></div>
+      </div>
+      <div class="card">
+        <div class="hd">🐾 이번 달 생일 강아지</div>
+        <div class="bd" id="bdayPanel"><div class="empty">불러오는 중…</div></div>
+      </div>
+      <div class="card">
+        <div class="hd">📦 재고 경고</div>
+        <div class="bd" id="invPanel"><div class="empty">불러오는 중…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    AI Context: <b>my_cafe.md</b> (카페 아이덴티티) &nbsp;+&nbsp; 운영 데이터: <b>Supabase</b> (cafe_sales / cafe_reservations / cafe_pets / cafe_inventory)<br/>
+    답변은 실제 조회된 운영 데이터에 근거합니다. · 멍스데이(Mongsday) AI 운영 파트너
+  </div>
+</div>
+
+<script>
+const won = n => (Number(n||0)).toLocaleString('ko-KR') + '원';
+const $ = id => document.getElementById(id);
+
+// ---------- 대시보드 로딩 ----------
+async function loadDashboard(){
+  const s = await (await fetch('/api/snapshot')).json();
+  if(s.error){ return; }
+
+  // 헤더
+  if(s.cafe?.name) $('cafeName').textContent = `${s.cafe.name} · AI 운영 파트너`;
+  if(s.cafe?.concept) $('cafeConcept').textContent = s.cafe.concept;
+  if(s.cafe?.slogan) $('cafeSlogan').textContent = `“${s.cafe.slogan}”`;
+
+  // KPI
+  const m = s.month;
+  const deltaHtml = (m.deltaPct===null) ? '' :
+    `<div class="d ${m.deltaPct>=0?'up':'down'}">지난달 같은 기간 ${m.deltaPct>=0?'▲':'▼'} ${Math.abs(m.deltaPct)}%</div>`;
+  const alertCount = s.inventory.alertCount;
+  $('kpis').innerHTML = `
+    <div class="kpi"><div class="k">이번 달 매출 (월중)</div><div class="v">${won(m.revenue)}</div>${deltaHtml}</div>
+    <div class="kpi"><div class="k">객단가</div><div class="v">${won(m.aov)}</div><div class="d">주문 ${m.orders}건</div></div>
+    <div class="kpi"><div class="k">다가오는 생일파티</div><div class="v">${s.reservations.upcoming.length}건</div><div class="d">이번 달 예약매출 ${won(s.reservations.monthRevenue)}</div></div>
+    <div class="kpi"><div class="k">이번 달 생일견</div><div class="v">${s.pets.birthdayThisMonth.length}마리</div><div class="d">파티 세일즈 기회</div></div>
+    <div class="kpi"><div class="k">단골 회원견</div><div class="v">${s.pets.total}마리</div><div class="d">VIP ${s.pets.vip[0]?.name||'-'} ${s.pets.vip[0]?.visits||''}회</div></div>
+    <div class="kpi alert"><div class="k">재고 경고</div><div class="v">${alertCount}건</div><div class="d down">발주 ${s.inventory.low.length} · 임박 ${s.inventory.expiring.length}</div></div>`;
+
+  // 스파크라인
+  const tr = s.trend;
+  const max = Math.max(1, ...tr.map(t=>t.revenue));
+  $('spark').innerHTML = tr.map(t =>
+    `<div class="b ${t.revenue===max?'max':''}" style="height:${Math.max(6,Math.round(t.revenue/max*100))}%" title="${t.d} ${won(t.revenue)}"></div>`).join('');
+  const last = tr[tr.length-1];
+  $('sparkNote').textContent = tr.length ? `최근일(${last.d}) ${won(last.revenue)} · 7일 합계 ${won(tr.reduce((a,b)=>a+b.revenue,0))}` : '데이터 없음';
+
+  // 다가오는 예약
+  $('resPanel').innerHTML = s.reservations.upcoming.length ? s.reservations.upcoming.map(r=>{
+    const pill = r.status==='확정' ? '<span class="pill ok">확정</span>' :
+                 r.status==='문의' ? '<span class="pill ask">문의</span>' :
+                 `<span class="pill">${r.status}</span>`;
+    return `<div class="row"><span class="em">🎉</span><div class="grow">
+      <div class="t">${r.pet||'-'} · ${r.pkg||''}</div>
+      <div class="s">${r.date} (D-${r.dleft}) · ${r.headcount||'?'}명 · ${won(r.amount)}</div>
+    </div>${pill}</div>`;
+  }).join('') : '<div class="empty">다가오는 예약이 없어요.</div>';
+
+  // 이번 달 생일견
+  $('bdayPanel').innerHTML = s.pets.birthdayThisMonth.length ? s.pets.birthdayThisMonth.map(p=>
+    `<div class="row"><span class="em">🐾</span><div class="grow">
+      <div class="t">${p.name} <span class="s" style="display:inline">(${p.breed})</span></div>
+      <div class="s">${p.day}일 생일 · ${p.age}살 · 견주 ${p.owner} · ${p.visits}회 방문</div>
+    </div><span class="pill hot">${p.day}일</span></div>`).join('')
+    : '<div class="empty">이번 달 생일인 회원견이 없어요.</div>';
+
+  // 재고 경고
+  const inv = [];
+  s.inventory.low.forEach(r=>inv.push(`<div class="row"><span class="em">📉</span><div class="grow">
+      <div class="t">${r.name}</div><div class="s">현재 ${r.stock}${r.unit} · 발주점 ${r.reorder}${r.unit}</div>
+    </div><span class="pill dan">발주필요</span></div>`));
+  s.inventory.expiring.forEach(r=>inv.push(`<div class="row"><span class="em">⏰</span><div class="grow">
+      <div class="t">${r.name}</div><div class="s">유통기한 ${r.expiry} · 재고 ${r.stock}${r.unit}</div>
+    </div><span class="pill dan">D-${r.dleft}</span></div>`));
+  $('invPanel').innerHTML = inv.length ? inv.join('') : '<div class="empty">재고 특이사항이 없어요.</div>';
+}
+
+// ---------- 채팅 ----------
+const CHIPS = ['이번 달 매출 어때?','다가오는 생일파티 정리해줘','이번 달 생일 강아지한테 뭐 하면 좋을까?','재고 점검해줘','매출 올릴 아이디어 줘','인기 메뉴가 뭐야?'];
+function renderChips(){
+  $('chips').innerHTML = CHIPS.map(c=>`<span class="chip">${c}</span>`).join('');
+  document.querySelectorAll('.chip').forEach(el=>el.onclick=()=>{ $('input').value=el.textContent; send(); });
+}
+function addMsg(text, who){
+  const div = document.createElement('div');
+  div.className = 'msg ' + (who==='me'?'me':'ai');
+  div.innerHTML = who==='me' ? esc(text) : `<div class="who">🐶 파트너</div>${esc(text)}`;
+  $('msgs').appendChild(div);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+function esc(t){ return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+let busy=false;
+async function send(){
+  const text = $('input').value.trim();
+  if(!text || busy) return;
+  busy=true; $('send').disabled=true; $('input').value='';
+  addMsg(text,'me');
+  const typing = document.createElement('div');
+  typing.className='typing'; typing.textContent='파트너가 운영 데이터를 살펴보는 중…';
+  $('msgs').appendChild(typing); $('msgs').scrollTop=$('msgs').scrollHeight;
+  try{
+    const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});
+    const data = await r.json();
+    typing.remove();
+    addMsg(data.reply || data.error || '응답이 없어요.', 'ai');
+  }catch(e){
+    typing.remove(); addMsg('네트워크 오류가 났어요. 서버가 켜져 있는지 확인해주세요.','ai');
+  }finally{ busy=false; $('send').disabled=false; $('input').focus(); }
+}
+$('send').onclick=send;
+$('input').addEventListener('keydown',e=>{ if(e.key==='Enter') send(); });
+
+// 초기화
+renderChips();
+loadDashboard().catch(()=>{});
+addMsg('안녕하세요 사장님! 멍스데이 AI 운영 파트너예요. 오늘 매출·예약·재고, 뭐든 물어보세요. 아래 빠른 질문을 눌러도 좋아요 🐶','ai');
+</script>
+</body>
+</html>

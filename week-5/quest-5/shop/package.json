@@ -1,0 +1,13 @@
+{
+  "name": "shop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "남성의류 쇼핑몰 — 상품목록(공개) → 장바구니(로그인 필수) → 관리 → 합계 (Supabase Auth + RLS)",
+  "scripts": {
+    "seed": "node seed.js"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5"
+  }
+}

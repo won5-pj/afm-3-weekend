@@ -1,0 +1,66 @@
+{
+  "metadata": {
+    "skill_name": "quick-dinner-recipe",
+    "skill_path": "C:/afm-3-weekend/.claude/skills/quick-dinner-recipe",
+    "executor_model": "claude-opus-4-8",
+    "timestamp": "2026-07-04T00:00:00Z",
+    "evals_run": ["generic-quick-dinner", "with-ingredients", "specific-ingredient"],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0, "eval_name": "generic-quick-dinner", "configuration": "with_skill", "run_number": 1,
+      "result": { "pass_rate": 1.0, "passed": 8, "failed": 0, "total": 8, "time_seconds": 45.7, "tokens": 29349, "errors": 0 },
+      "notes": ["썸네일 318KB, 첫 시도에 생성 (FAL_KEY 폴백 자동 동작, 수동 개입 0)"]
+    },
+    {
+      "eval_id": 0, "eval_name": "generic-quick-dinner", "configuration": "without_skill", "run_number": 1,
+      "result": { "pass_rate": 0.5, "passed": 4, "failed": 4, "total": 8, "time_seconds": 44.4, "tokens": 24700, "errors": 0 },
+      "notes": ["iteration-1 baseline 재사용 (스킬 무관)"]
+    },
+    {
+      "eval_id": 1, "eval_name": "with-ingredients", "configuration": "with_skill", "run_number": 1,
+      "result": { "pass_rate": 1.0, "passed": 8, "failed": 0, "total": 8, "time_seconds": 54.0, "tokens": 29918, "errors": 0 },
+      "notes": ["계란·김치·밥만 사용, 썸네일 284KB, 첫 시도 성공"]
+    },
+    {
+      "eval_id": 1, "eval_name": "with-ingredients", "configuration": "without_skill", "run_number": 1,
+      "result": { "pass_rate": 0.625, "passed": 5, "failed": 3, "total": 8, "time_seconds": 36.0, "tokens": 24537, "errors": 0 },
+      "notes": ["iteration-1 baseline 재사용"]
+    },
+    {
+      "eval_id": 2, "eval_name": "specific-ingredient", "configuration": "with_skill", "run_number": 1,
+      "result": { "pass_rate": 1.0, "passed": 8, "failed": 0, "total": 8, "time_seconds": 55.6, "tokens": 29658, "errors": 0 },
+      "notes": ["참치마요덮밥 한그릇, 썸네일 326KB, 첫 시도 성공, 설거지 팁 포함"]
+    },
+    {
+      "eval_id": 2, "eval_name": "specific-ingredient", "configuration": "without_skill", "run_number": 1,
+      "result": { "pass_rate": 0.625, "passed": 5, "failed": 3, "total": 8, "time_seconds": 42.5, "tokens": 24936, "errors": 0 },
+      "notes": ["iteration-1 baseline 재사용"]
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": { "mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0 },
+      "time_seconds": { "mean": 51.8, "stddev": 4.3, "min": 45.7, "max": 55.6 },
+      "tokens": { "mean": 29642, "stddev": 233, "min": 29349, "max": 29918 }
+    },
+    "without_skill": {
+      "pass_rate": { "mean": 0.583, "stddev": 0.059, "min": 0.5, "max": 0.625 },
+      "time_seconds": { "mean": 41.0, "stddev": 3.6, "min": 36.0, "max": 44.4 },
+      "tokens": { "mean": 24724, "stddev": 164, "min": 24537, "max": 24936 }
+    },
+    "delta": {
+      "pass_rate": "+0.42",
+      "time_seconds": "+10.8",
+      "tokens": "+4918"
+    }
+  },
+  "notes": [
+    "★ iteration-2 수정 검증: FAL_KEY 레지스트리 폴백 추가 후, with_skill 3/3 모두 썸네일을 첫 스크립트 호출에 생성했고 수동 개입이 0건이었다. iteration-1에서 3/3 모두 필요했던 '수동 키 로드' 워크어라운드가 완전히 사라짐.",
+    "부수 효과: 재시도가 없어져 with_skill 평균 실행 71.8초→51.8초, 오버헤드 +30.8초→+10.8초로 크게 개선. 품질(통과율)은 8/8 그대로 유지.",
+    "품질 결과는 iteration-1과 동일: with_skill 3/3 완벽(8/8), baseline은 썸네일 3개 항목 + 파일명 규칙에서 실패(평균 58%).",
+    "비차별 항목(레시피 생성·한국어 본문·15분·설거지 팁)은 양쪽 통과. 스킬의 실질 가치는 여전히 '썸네일 자동 생성 + 파일명/저장 규칙 표준화'.",
+    "baseline은 스킬과 무관하여 iteration-1 결과를 재사용함(재실행 토큰 절약)."
+  ]
+}

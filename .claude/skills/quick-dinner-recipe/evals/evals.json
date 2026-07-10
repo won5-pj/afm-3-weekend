@@ -1,0 +1,26 @@
+{
+  "skill_name": "quick-dinner-recipe",
+  "evals": [
+    {
+      "id": 0,
+      "name": "generic-quick-dinner",
+      "prompt": "오늘 저녁 뭐 해먹지? 15분 안에 되는 거 하나 추천해줘",
+      "expected_output": "15분 이내 저녁 레시피 1개를 week-5/my-recipe/에 .md로 저장하고, 맨 위에 fal.ai로 생성한 썸네일 이미지를 넣는다.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "with-ingredients",
+      "prompt": "냉장고에 계란이랑 김치, 찬밥 있는데 이걸로 후딱 저녁 만들어줘",
+      "expected_output": "가진 재료(계란·김치·밥) 위주의 15분 레시피를 .md로 저장하고 썸네일을 맨 위에 넣는다. 없는 주재료를 억지로 넣지 않는다.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "specific-ingredient",
+      "prompt": "참치캔 하나 있는데 이걸로 간단한 저녁 한 그릇 만들어줄래? 설거지 적게 나오는 걸로",
+      "expected_output": "참치캔 활용 15분 한그릇 요리를 .md로 저장, 썸네일 포함, 설거지 최소화 팁 포함.",
+      "files": []
+    }
+  ]
+}

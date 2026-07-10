@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🗣️ 커뮤니티 게시판</title>
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- Supabase JS (UMD) → window.supabase.createClient -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- React 18 + Babel (인라인 JSX). Babel 은 7.x 고정 -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+  <style>
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .animate-fadeIn { animation: fadeIn 0.25s ease-out; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-indigo-50 min-h-screen text-slate-800">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ============================================================
+    // ⚙️ Supabase 설정
+    // ============================================================
+    const SUPABASE_URL = 'https://ifrydgoofjalfufcpxka.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_lpU174Ykn1vPFv9fmUJfxQ_tviU0Xa4';
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // 게시글 조회 시 작성자 이름 + 좋아요 수를 함께 (FK 임베드/집계)
+    // profiles 는 FK 힌트(!posts_author_id_fkey)로 명시 — post_likes/comments 도 profiles 를 참조해 관계가 모호해지는 것 방지
+    const POST_SELECT = 'id, title, content, created_at, updated_at, author_id, profiles!posts_author_id_fkey ( username ), post_likes ( count ), comments ( count )';
+
+    // ============================================================
+    // 🛠️ 헬퍼
+    // ============================================================
+    function timeAgo(iso) {
+      if (!iso) return '';
+      const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(iso).toLocaleDateString('ko-KR');
+    }
+    function fullDate(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleString('ko-KR', {
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+    }
+    const authorName = (p) => (p && p.profiles && p.profiles.username) || '알 수 없음';
+    const initial = (name) => (name || '?').trim().charAt(0).toUpperCase();
+    // post_likes(count) / comments(count) 임베드 → [{count: N}] 형태
+    const likeCount = (p) => (p && p.post_likes && p.post_likes[0] && p.post_likes[0].count) || 0;
+    const commentCount = (p) => (p && p.comments && p.comments[0] && p.comments[0].count) || 0;
+
+    // Supabase/Auth 에러 → 친절한 한국어 메시지
+    function friendly(err) {
+      const m = (err && err.message) || String(err || '알 수 없는 오류');
+      const map = {
+        'Invalid login credentials': '이메일 또는 비밀번호가 올바르지 않습니다.',
+        'Email not confirmed': '이메일 인증이 필요합니다. 메일함을 확인하거나 관리자에게 문의하세요.',
+        'User already registered': '이미 가입된 이메일입니다. 로그인해 주세요.',
+        'Password should be at least 6 characters': '비밀번호는 최소 6자 이상이어야 합니다.',
+        'Anonymous sign-ins are disabled': '익명 로그인이 비활성화되어 있습니다.',
+      };
+      for (const k in map) if (m.includes(k)) return map[k];
+      return m;
+    }
+
+    // ============================================================
+    // 🎨 공용 UI
+    // ============================================================
+    function Button({ variant = 'primary', size = 'md', type = 'button', disabled, onClick, className = '', children }) {
+      const base = 'inline-flex items-center justify-center gap-1.5 font-semibold rounded-xl transition-all focus:outline-none focus:ring-2 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+      const variants = {
+        primary: 'bg-indigo-600 hover:bg-indigo-700 text-white focus:ring-indigo-300 shadow-sm',
+        secondary: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 focus:ring-slate-200',
+        danger: 'bg-white hover:bg-red-50 text-red-600 border border-red-200 focus:ring-red-200',
+        ghost: 'bg-transparent hover:bg-slate-100 text-slate-500 focus:ring-slate-200',
+      };
+      const sizes = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-base' };
+      return (
+        <button type={type} disabled={disabled} onClick={onClick}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}>{children}</button>
+      );
+    }
+    function Input({ label, type = 'text', value, onChange, placeholder, disabled, autoFocus }) {
+      return (
+        <label className="block">
+          {label && <span className="block mb-1 text-sm font-medium text-slate-600">{label}</span>}
+          <input type={type} value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} autoFocus={autoFocus}
+            className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition disabled:bg-slate-100" />
+        </label>
+      );
+    }
+    function Banner({ tone = 'error', message, onClose }) {
+      if (!message) return null;
+      const tones = {
+        error: 'bg-red-50 border-red-100 text-red-600',
+        info: 'bg-indigo-50 border-indigo-100 text-indigo-700',
+        success: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+      };
+      return (
+        <div className={`flex items-start justify-between gap-3 p-3 rounded-xl border text-sm ${tones[tone]}`}>
+          <span className="whitespace-pre-wrap">{tone === 'error' ? '⚠️ ' : tone === 'success' ? '✅ ' : 'ℹ️ '}{message}</span>
+          {onClose && <button onClick={onClose} className="opacity-60 hover:opacity-100 flex-none">✕</button>}
+        </div>
+      );
+    }
+    function Spinner({ label }) {
+      return (
+        <div className="flex flex-col items-center justify-center py-14 text-slate-400">
+          <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mb-3"></div>
+          {label && <p className="text-sm">{label}</p>}
+        </div>
+      );
+    }
+    function Avatar({ name, size = 'md' }) {
+      const sz = size === 'sm' ? 'w-7 h-7 text-xs' : 'w-9 h-9 text-sm';
+      return (
+        <div className={`${sz} flex-none rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center`}>
+          {initial(name)}
+        </div>
+      );
+    }
+
+    // ❤️ 좋아요(하트) 버튼 — 낙관적 토글, 실패 시 롤백. 사용자당 글 1회(post_likes PK)
+    function HeartButton({ postId, currentUserId, initialLiked, initialCount, size = 'md' }) {
+      const [liked, setLiked] = useState(!!initialLiked);
+      const [count, setCount] = useState(initialCount || 0);
+      const [pending, setPending] = useState(false);
+
+      // 부모 재조회로 초기값이 바뀌면 동기화
+      useEffect(() => { setLiked(!!initialLiked); }, [initialLiked]);
+      useEffect(() => { setCount(initialCount || 0); }, [initialCount]);
+
+      const toggle = async (e) => {
+        if (e) { e.stopPropagation(); e.preventDefault(); }
+        if (pending) return;
+        setPending(true);
+        const next = !liked;
+        setLiked(next);
+        setCount((c) => c + (next ? 1 : -1));
+        try {
+          if (next) {
+            // user_id 는 DB 기본값 auth.uid() 로 채워짐 (RLS: 본인 좋아요만)
+            const { error } = await db.from('post_likes').insert({ post_id: postId });
+            if (error) throw error;
+          } else {
+            const { error } = await db.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUserId);
+            if (error) throw error;
+          }
+        } catch (err) {
+          // 실패 → 롤백
+          setLiked(!next);
+          setCount((c) => c + (next ? -1 : 1));
+        } finally {
+          setPending(false);
+        }
+      };
+
+      const sz = size === 'lg' ? 'px-4 py-2 text-base' : 'px-3 py-1.5 text-sm';
+      return (
+        <button onClick={toggle} disabled={pending} title={liked ? '좋아요 취소' : '좋아요'}
+          className={`inline-flex items-center gap-1.5 rounded-full border font-semibold transition ${sz} ${
+            liked ? 'bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100'
+                  : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+          } disabled:opacity-60`}>
+          <span>{liked ? '❤️' : '🤍'}</span>
+          <span className="tabular-nums">{count}</span>
+        </button>
+      );
+    }
+
+    // ============================================================
+    // 💬 댓글(리플) 영역 — 조회/작성(로그인 누구나) + 본인 댓글만 삭제
+    // ============================================================
+    const COMMENT_SELECT = 'id, content, created_at, author_id, profiles ( username )';
+
+    function CommentSection({ postId, currentUserId }) {
+      const [comments, setComments] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [text, setText] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+
+      const load = useCallback(async () => {
+        setLoading(true); setError('');
+        const { data, error } = await db.from('comments')
+          .select(COMMENT_SELECT).eq('post_id', postId).order('created_at', { ascending: true });
+        if (error) setError(friendly(error));
+        else setComments(data || []);
+        setLoading(false);
+      }, [postId]);
+
+      useEffect(() => { load(); }, [load]);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        const c = text.trim();
+        if (!c) return;
+        setSubmitting(true); setError('');
+        // author_id 는 DB 기본값 auth.uid() 로 채워짐 (RLS: 본인으로만 작성)
+        const { data, error } = await db.from('comments')
+          .insert({ post_id: postId, content: c }).select(COMMENT_SELECT).single();
+        setSubmitting(false);
+        if (error) { setError(friendly(error)); return; }
+        setComments((prev) => [...prev, data]);
+        setText('');
+      };
+
+      const handleDelete = async (id) => {
+        if (!confirm('이 댓글을 삭제할까요?')) return;
+        setError('');
+        const { error } = await db.from('comments').delete().eq('id', id);
+        if (error) { setError(friendly(error)); return; }
+        setComments((prev) => prev.filter((c) => c.id !== id));
+      };
+
+      return (
+        <section className="mt-5 bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 mb-4">💬 댓글 {comments.length}</h2>
+
+          <form onSubmit={handleSubmit} className="flex items-start gap-2 mb-5">
+            <input value={text} onChange={(e) => setText(e.target.value)} disabled={submitting}
+              placeholder="따뜻한 댓글을 남겨보세요"
+              className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition disabled:bg-slate-100" />
+            <Button type="submit" variant="primary" disabled={submitting || !text.trim()}>
+              {submitting ? '등록 중...' : '등록'}
+            </Button>
+          </form>
+
+          <Banner tone="error" message={error} onClose={() => setError('')} />
+
+          {loading ? (
+            <Spinner label="댓글 불러오는 중..." />
+          ) : comments.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-6">아직 댓글이 없어요. 첫 댓글을 남겨보세요!</p>
+          ) : (
+            <div>
+              {comments.map((c) => (
+                <div key={c.id} className="flex gap-3 py-3 border-t border-slate-100">
+                  <Avatar name={authorName(c)} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm text-slate-700">{authorName(c)}</span>
+                      <span className="text-xs text-slate-400" title={fullDate(c.created_at)}>{timeAgo(c.created_at)}</span>
+                      {c.author_id === currentUserId && (
+                        <button onClick={() => handleDelete(c.id)}
+                          className="ml-auto text-xs text-slate-300 hover:text-red-400 transition">삭제</button>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap break-words">{c.content}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    // ============================================================
+    // 🔐 회원가입 / 로그인 화면
+    // ============================================================
+    function AuthScreen() {
+      const [mode, setMode] = useState('login'); // 'login' | 'signup'
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [username, setUsername] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [error, setError] = useState('');
+      const [info, setInfo] = useState('');
+
+      const reset = (m) => { setMode(m); setError(''); setInfo(''); };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError(''); setInfo('');
+        if (!email.trim() || !password) { setError('이메일과 비밀번호를 입력해 주세요.'); return; }
+        if (mode === 'signup' && !username.trim()) { setError('사용할 이름(닉네임)을 입력해 주세요.'); return; }
+        setBusy(true);
+        try {
+          if (mode === 'signup') {
+            const { data, error } = await db.auth.signUp({
+              email: email.trim(),
+              password,
+              options: { data: { username: username.trim() } },
+            });
+            if (error) throw error;
+            if (data.session) {
+              // 이메일 인증 OFF → 즉시 로그인됨 (onAuthStateChange 가 처리)
+              return;
+            }
+            // 세션 없음 → 이메일 인증이 켜져 있을 수 있음. 로그인 탭으로.
+            setInfo('회원가입이 완료되었습니다. 로그인해 주세요.\n(이메일 인증이 켜져 있다면 메일함을 먼저 확인하세요.)');
+            setMode('login');
+            setPassword('');
+          } else {
+            const { error } = await db.auth.signInWithPassword({ email: email.trim(), password });
+            if (error) throw error;
+            // 성공 → onAuthStateChange 가 화면 전환
+          }
+        } catch (err) {
+          setError(friendly(err));
+        } finally {
+          setBusy(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen flex items-center justify-center px-4 py-10">
+          <div className="w-full max-w-md animate-fadeIn">
+            <div className="text-center mb-6">
+              <div className="text-5xl mb-2">🗣️</div>
+              <h1 className="text-2xl font-extrabold text-slate-800">커뮤니티 게시판</h1>
+              <p className="text-slate-500 text-sm mt-1">로그인하고 이웃들과 이야기를 나눠보세요.</p>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+              {/* 탭 */}
+              <div className="grid grid-cols-2 gap-1 p-1 mb-5 bg-slate-100 rounded-xl">
+                {[['login', '로그인'], ['signup', '회원가입']].map(([m, label]) => (
+                  <button key={m} onClick={() => reset(m)}
+                    className={`py-2 rounded-lg text-sm font-semibold transition ${
+                      mode === m ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}>{label}</button>
+                ))}
+              </div>
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {mode === 'signup' && (
+                  <Input label="이름 (닉네임)" value={username} onChange={(e) => setUsername(e.target.value)}
+                    placeholder="예) 홍길동" disabled={busy} autoFocus />
+                )}
+                <Input label="이메일" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com" disabled={busy} autoFocus={mode === 'login'} />
+                <Input label="비밀번호" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder="6자 이상" disabled={busy} />
+
+                <Banner tone="error" message={error} onClose={() => setError('')} />
+                <Banner tone="info" message={info} onClose={() => setInfo('')} />
+
+                <Button type="submit" variant="primary" size="lg" disabled={busy} className="w-full">
+                  {busy ? '처리 중...' : mode === 'login' ? '로그인' : '회원가입'}
+                </Button>
+              </form>
+
+              <p className="text-center text-xs text-slate-400 mt-4">
+                {mode === 'login'
+                  ? <>계정이 없으신가요? <button onClick={() => reset('signup')} className="text-indigo-600 font-semibold hover:underline">회원가입</button></>
+                  : <>이미 계정이 있으신가요? <button onClick={() => reset('login')} className="text-indigo-600 font-semibold hover:underline">로그인</button></>}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // 📋 게시글 목록
+    // ============================================================
+    function PostList({ currentUserId, onOpen, onWrite, refreshKey }) {
+      const [posts, setPosts] = useState([]);
+      const [likedIds, setLikedIds] = useState(() => new Set());
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+
+      const load = useCallback(async () => {
+        setLoading(true); setError('');
+        const [postsRes, likesRes] = await Promise.all([
+          db.from('posts').select(POST_SELECT).order('created_at', { ascending: false }),
+          db.from('post_likes').select('post_id').eq('user_id', currentUserId),
+        ]);
+        if (postsRes.error) setError(friendly(postsRes.error));
+        else setPosts(postsRes.data || []);
+        if (!likesRes.error) setLikedIds(new Set((likesRes.data || []).map((r) => r.post_id)));
+        setLoading(false);
+      }, [currentUserId]);
+
+      useEffect(() => { load(); }, [load, refreshKey]);
+
+      return (
+        <div className="animate-fadeIn">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">📋 전체 게시글</h2>
+              <p className="text-sm text-slate-400 mt-0.5">최신순 · 로그인한 누구나 볼 수 있어요</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="md" onClick={load} disabled={loading}>🔄</Button>
+              <Button variant="primary" size="md" onClick={onWrite}>✏️ 글쓰기</Button>
+            </div>
+          </div>
+
+          <Banner tone="error" message={error} onClose={() => setError('')} />
+
+          {loading ? (
+            <Spinner label="게시글을 불러오는 중..." />
+          ) : posts.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-100">
+              <div className="text-5xl mb-3">📭</div>
+              <p className="text-slate-400 text-sm">아직 게시글이 없어요. 첫 글을 남겨보세요!</p>
+              <div className="mt-4"><Button variant="primary" onClick={onWrite}>✏️ 첫 글 쓰기</Button></div>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {posts.map((p) => (
+                <li key={p.id}
+                  className="bg-white rounded-2xl border border-slate-100 hover:shadow-md hover:border-indigo-200 transition group">
+                  <div onClick={() => onOpen(p.id)} className="p-5 pb-3 cursor-pointer">
+                    <h3 className="font-bold text-slate-800 text-lg truncate group-hover:text-indigo-600">{p.title}</h3>
+                    <p className="text-slate-500 text-sm mt-1 line-clamp-2 whitespace-pre-wrap break-words">{p.content}</p>
+                    <div className="flex items-center gap-2 mt-3 text-xs text-slate-400">
+                      <Avatar name={authorName(p)} size="sm" />
+                      <span className="font-medium text-slate-600">{authorName(p)}</span>
+                      <span>·</span>
+                      <span title={fullDate(p.created_at)}>{timeAgo(p.created_at)}</span>
+                    </div>
+                  </div>
+                  <div className="px-5 pb-4 flex items-center gap-2">
+                    <HeartButton postId={p.id} currentUserId={currentUserId}
+                      initialLiked={likedIds.has(p.id)} initialCount={likeCount(p)} />
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 text-slate-500 text-sm">
+                      💬 <span className="tabular-nums">{commentCount(p)}</span>
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================================
+    // 📄 게시글 상세
+    // ============================================================
+    function PostDetail({ postId, currentUserId, onBack, onEdit, onDeleted }) {
+      const [post, setPost] = useState(null);
+      const [liked, setLiked] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const [deleting, setDeleting] = useState(false);
+
+      const load = useCallback(async () => {
+        setLoading(true); setError('');
+        const [postRes, likeRes] = await Promise.all([
+          db.from('posts').select(POST_SELECT).eq('id', postId).single(),
+          db.from('post_likes').select('post_id').eq('post_id', postId).eq('user_id', currentUserId).maybeSingle(),
+        ]);
+        if (postRes.error) setError(friendly(postRes.error));
+        else setPost(postRes.data);
+        if (!likeRes.error) setLiked(!!likeRes.data);
+        setLoading(false);
+      }, [postId, currentUserId]);
+
+      useEffect(() => { load(); }, [load]);
+
+      const handleDelete = async () => {
+        if (!confirm('이 게시글을 삭제할까요? 되돌릴 수 없습니다.')) return;
+        setDeleting(true); setError('');
+        const { error } = await db.from('posts').delete().eq('id', postId);
+        setDeleting(false);
+        if (error) { setError(friendly(error)); return; }
+        onDeleted();
+      };
+
+      if (loading) return <Spinner label="불러오는 중..." />;
+      if (error && !post) return (
+        <div className="animate-fadeIn">
+          <Banner tone="error" message={error} />
+          <div className="mt-4"><Button variant="secondary" onClick={onBack}>← 목록으로</Button></div>
+        </div>
+      );
+      if (!post) return null;
+
+      const isOwner = post.author_id === currentUserId;
+
+      return (
+        <div className="animate-fadeIn">
+          <button onClick={onBack} className="text-sm text-slate-500 hover:text-indigo-600 mb-4">← 목록으로</button>
+
+          <article className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 sm:p-8">
+            <h1 className="text-2xl font-extrabold text-slate-800 break-words">{post.title}</h1>
+            <div className="flex items-center gap-2 mt-3 pb-5 border-b border-slate-100 text-sm">
+              <Avatar name={authorName(post)} />
+              <div>
+                <div className="font-semibold text-slate-700">{authorName(post)}</div>
+                <div className="text-xs text-slate-400">
+                  {fullDate(post.created_at)}
+                  {post.updated_at && post.updated_at !== post.created_at && ' (수정됨)'}
+                </div>
+              </div>
+              {isOwner && <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-semibold">내 글</span>}
+            </div>
+
+            <div className="py-6 text-slate-700 text-[15px] leading-relaxed whitespace-pre-wrap break-words min-h-[100px]">
+              {post.content}
+            </div>
+
+            <div className="flex items-center gap-3 py-4 border-t border-slate-100">
+              <HeartButton postId={post.id} currentUserId={currentUserId}
+                initialLiked={liked} initialCount={likeCount(post)} size="lg" />
+              <span className="text-sm text-slate-400">이 글이 좋았다면 하트를 눌러보세요</span>
+            </div>
+
+            <Banner tone="error" message={error} onClose={() => setError('')} />
+
+            {isOwner && (
+              <div className="flex gap-2 pt-4 border-t border-slate-100">
+                <Button variant="secondary" onClick={() => onEdit(post.id)}>✏️ 수정</Button>
+                <Button variant="danger" onClick={handleDelete} disabled={deleting}>
+                  {deleting ? '삭제 중...' : '🗑️ 삭제'}
+                </Button>
+              </div>
+            )}
+          </article>
+
+          <CommentSection postId={post.id} currentUserId={currentUserId} />
+        </div>
+      );
+    }
+
+    // ============================================================
+    // ✏️ 글쓰기 / 수정 폼
+    // ============================================================
+    function PostForm({ postId, onDone, onCancel }) {
+      const isEdit = postId != null;
+      const [title, setTitle] = useState('');
+      const [content, setContent] = useState('');
+      const [loading, setLoading] = useState(isEdit);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (!isEdit) return;
+        (async () => {
+          setLoading(true);
+          const { data, error } = await db.from('posts').select('title, content').eq('id', postId).single();
+          if (error) setError(friendly(error));
+          else if (data) { setTitle(data.title); setContent(data.content); }
+          setLoading(false);
+        })();
+      }, [postId, isEdit]);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        if (!title.trim()) { setError('제목을 입력해 주세요.'); return; }
+        if (!content.trim()) { setError('내용을 입력해 주세요.'); return; }
+        setSaving(true);
+        try {
+          if (isEdit) {
+            const { data, error } = await db.from('posts')
+              .update({ title: title.trim(), content: content.trim() })
+              .eq('id', postId).select('id').single();
+            if (error) throw error;
+            onDone(data.id);
+          } else {
+            // author_id 는 DB 기본값 auth.uid() 로 채워짐 (RLS: 본인만 작성 가능)
+            const { data, error } = await db.from('posts')
+              .insert({ title: title.trim(), content: content.trim() })
+              .select('id').single();
+            if (error) throw error;
+            onDone(data.id);
+          }
+        } catch (err) {
+          setError(friendly(err));
+        } finally {
+          setSaving(false);
+        }
+      };
+
+      if (loading) return <Spinner label="불러오는 중..." />;
+
+      return (
+        <div className="animate-fadeIn">
+          <button onClick={onCancel} className="text-sm text-slate-500 hover:text-indigo-600 mb-4">← 취소</button>
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 sm:p-8">
+            <h2 className="text-xl font-bold text-slate-800 mb-5">{isEdit ? '✏️ 글 수정' : '✏️ 새 글 쓰기'}</h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <Input label="제목" value={title} onChange={(e) => setTitle(e.target.value)}
+                placeholder="제목을 입력하세요" disabled={saving} autoFocus />
+              <label className="block">
+                <span className="block mb-1 text-sm font-medium text-slate-600">내용</span>
+                <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={10} disabled={saving}
+                  placeholder="내용을 입력하세요"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition resize-y disabled:bg-slate-100" />
+              </label>
+              <Banner tone="error" message={error} onClose={() => setError('')} />
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="secondary" onClick={onCancel} disabled={saving}>취소</Button>
+                <Button type="submit" variant="primary" disabled={saving}>
+                  {saving ? '저장 중...' : isEdit ? '수정 완료' : '게시하기'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // 🚀 App (인증 게이트 + 라우팅)
+    // ============================================================
+    function App() {
+      const [session, setSession] = useState(undefined); // undefined = 확인 중
+      const [username, setUsername] = useState('');
+      const [view, setView] = useState({ name: 'list' }); // list | detail | write | edit
+      const [refreshKey, setRefreshKey] = useState(0);
+
+      // 세션 구독
+      useEffect(() => {
+        db.auth.getSession().then(({ data }) => setSession(data.session));
+        const { data: sub } = db.auth.onAuthStateChange((_event, s) => {
+          setSession(s);
+          setView({ name: 'list' });
+        });
+        return () => sub.subscription.unsubscribe();
+      }, []);
+
+      // 로그인 사용자 표시 이름 로드 (profiles.username, 없으면 메타/이메일)
+      useEffect(() => {
+        if (!session) { setUsername(''); return; }
+        (async () => {
+          const { data } = await db.from('profiles').select('username').eq('id', session.user.id).single();
+          const meta = session.user.user_metadata || {};
+          setUsername((data && data.username) || meta.username || (session.user.email || '').split('@')[0]);
+        })();
+      }, [session]);
+
+      const goList = (refresh) => { if (refresh) setRefreshKey((k) => k + 1); setView({ name: 'list' }); };
+
+      if (session === undefined) {
+        return <div className="min-h-screen flex items-center justify-center"><Spinner label="불러오는 중..." /></div>;
+      }
+      if (!session) return <AuthScreen />;
+
+      return (
+        <div className="min-h-screen">
+          {/* 상단바 */}
+          <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-100">
+            <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+              <button onClick={() => goList(true)} className="font-extrabold text-slate-800 flex items-center gap-1.5">
+                <span className="text-xl">🗣️</span> 커뮤니티 게시판
+              </button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Avatar name={username} size="sm" />
+                  <span className="font-medium text-slate-600 hidden sm:inline">{username}</span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => db.auth.signOut()}>로그아웃</Button>
+              </div>
+            </div>
+          </header>
+
+          <main className="max-w-2xl mx-auto px-4 py-6">
+            {view.name === 'list' && (
+              <PostList
+                currentUserId={session.user.id}
+                refreshKey={refreshKey}
+                onOpen={(id) => setView({ name: 'detail', id })}
+                onWrite={() => setView({ name: 'write' })}
+              />
+            )}
+            {view.name === 'detail' && (
+              <PostDetail
+                postId={view.id}
+                currentUserId={session.user.id}
+                onBack={() => goList(true)}
+                onEdit={(id) => setView({ name: 'edit', id })}
+                onDeleted={() => goList(true)}
+              />
+            )}
+            {view.name === 'write' && (
+              <PostForm
+                onDone={(id) => setView({ name: 'detail', id })}
+                onCancel={() => goList(true)}
+              />
+            )}
+            {view.name === 'edit' && (
+              <PostForm
+                postId={view.id}
+                onDone={(id) => setView({ name: 'detail', id })}
+                onCancel={() => setView({ name: 'detail', id: view.id })}
+              />
+            )}
+          </main>
+
+          <footer className="max-w-2xl mx-auto px-4 py-8 text-center text-xs text-slate-300">
+            🗣️ 커뮤니티 게시판 · Supabase Auth + RLS
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
