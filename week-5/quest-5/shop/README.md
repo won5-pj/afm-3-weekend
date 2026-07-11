@@ -1,11 +1,12 @@
-# 🛍️ MEN'S SHOP — 남성의류 쇼핑몰 (결제 없음)
+# 🛍️ MEN'S SHOP — 남성의류 쇼핑몰
 
-상품 목록(공개) → 장바구니 담기(로그인 필수) → 내 장바구니 관리 → 합계 계산까지 구현한
-단일 HTML 쇼핑몰 앱입니다. 결제 없이 `주문하기`는 "준비 중" 안내만 띄웁니다.
+상품 목록(공개) → 장바구니(로그인 필수) → **토스페이먼츠 실제 결제(테스트)** → 주문 상세 →
+마이페이지 주문 내역까지 구현한 단일 HTML 쇼핑몰 앱입니다.
 
 ## 핵심 구조
 ```
-[상품 목록 (DB, 공개)] → [장바구니 담기 (로그인 필수)] → [내 장바구니 관리] → [합계 계산]
+[상품 목록 (DB, 공개)] → [장바구니 (로그인 필수)] → [결제(토스페이먼츠)]
+   → [서버 승인(confirm)] → [주문 상세] → [마이페이지 주문 내역]
 ```
 
 ## 기능
@@ -19,11 +20,21 @@
   - 수량변경: `+` / `−` (수량 1에서 `−` 비활성)
   - 삭제: 항목별 `🗑️ 삭제`, 전체 비우기
   - 합계: 총 수량·총 금액 자동 계산
-- **주문하기**: 클릭 시 "주문 기능 준비 중" 모달
+- **결제(토스페이먼츠 결제위젯 · 테스트 모드)**
+  - 장바구니 → `주문하기` → 결제위젯(결제수단+약관) → `결제하기`
+  - **서버 승인**: 시크릿키는 클라이언트에 노출하지 않고 Vercel 서버리스 함수(`api/confirm-payment.js`)에서만 사용
+  - **금액 위변조 방지**: 결제 전 `orders`에 저장한 신뢰 금액과 대조해 일치할 때만 승인 (멱등 처리)
+  - 승인 성공 시 주문 `DONE`+`paid_at` 기록 및 장바구니 자동 비우기
+  - 결제 테스트용 **100원 상품** 포함
+- **주문 상세 페이지**: 결제 완료 후 상품명 / 금액 / 주문번호 / 주문일시 / 결제수단 표시
+- **마이페이지**: 내 주문 내역(상품명 / 금액 / 주문일 / 주문번호)
+  - **본인 주문만** (RLS + 쿼리 `user_id = 로그인 uid` 필터) · **최신순**(`paid_at DESC`)
+  - 주문번호는 앞 8자리만 표시(`#ORDXXXXX...`) · 0건이면 "아직 주문 내역이 없어요" 빈 상태
 
 ## 기술 스택
-- Frontend: 단일 `index.html` (React 18 + Babel standalone + Tailwind CDN)
-- Backend: Supabase (Postgres + Auth + RLS), `@supabase/supabase-js` REST
+- Frontend: 단일 `index.html` (React 18 + Babel standalone + Tailwind CDN + 토스페이먼츠 v2 SDK)
+- Backend: Supabase (Postgres + Auth + RLS) + Vercel 서버리스 함수(결제 승인)
+- 결제: 토스페이먼츠 결제위젯 (승인 API는 서버에서 시크릿키로 호출)
 
 ## DB 스키마 (`schema.sql`)
 | 테이블 | 컬럼 | 접근 정책(RLS) |
@@ -31,19 +42,26 @@
 | `products` | id, name, price, image_url, description | **공개** — anon·authenticated 조회, 쓰기 불가 |
 | `cart` | id, user_id, product_id, quantity | **본인만** — `user_id = auth.uid()` 인 행만 조회/담기/수정/삭제 |
 | `ratings` | id, user_id, product_id, rating(1~5) | **조회 공개**(평균 계산) / **등록·수정·삭제는 본인만** · `unique(user_id, product_id)` |
+| `orders` | order_id(PK), user_id, amount, order_name, status, paid_at, created_at | **본인만** — `user_id = auth.uid()`. 결제 전 PENDING 저장 → 서버 승인 후 DONE+paid_at |
 
-- `cart.user_id` 기본값 `auth.uid()`, `unique(user_id, product_id)` 로 같은 상품 1행 유지
+- `cart.user_id`·`orders.user_id`·`ratings.user_id` 기본값 `auth.uid()`
 - 이미지는 외부 의존성 없는 SVG data URI (항상 로딩됨)
+
+## 결제(토스페이먼츠) 구성
+- 클라이언트키는 `index.html`에 공개(공개키). **시크릿키는 커밋/노출 금지** → Vercel 환경변수 `TOSS_SECRET_KEY`.
+- 서버 승인 함수: `api/confirm-payment.js` (무의존성 Vercel 함수). 흐름: 저장금액 대조 → 토스 `payments/confirm` → 주문 DONE + 장바구니 비우기.
 
 ## 로컬 실행 / 시드
 ```bash
-npm install          # postgres 드라이버
-node seed.js         # products/cart 테이블 + RLS 생성 및 상품 10종 시드 (재실행 안전)
-npx serve .          # 정적 서버로 index.html 열기
+npm install                 # postgres 드라이버
+node seed.js                # products/cart/ratings 테이블 + RLS + 상품/별점 시드 (재실행 안전)
+node add-payment-extras.js  # orders.paid_at 컬럼 + 100원 테스트 상품 (재실행 안전)
+npx serve .                 # 정적 서버로 index.html 열기 (단, /api 함수는 Vercel에서만 동작)
 ```
 
 ## 배포
-Vercel 정적 배포. dev 파일은 `.vercelignore` 로 제외하고 `index.html` 만 서빙합니다.
+Vercel 배포. `index.html`(정적) + `api/`(서버리스 함수)를 함께 올리고, dev 파일은 `.vercelignore` 로 제외.
 ```bash
+vercel env add TOSS_SECRET_KEY production   # 최초 1회 (시크릿키 주입)
 vercel --prod
 ```

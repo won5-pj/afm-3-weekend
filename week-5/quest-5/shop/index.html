@@ -7,6 +7,8 @@
   <script src="https://cdn.tailwindcss.com/3.4.16"></script>
   <!-- Supabase JS (UMD) → window.supabase.createClient -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- 토스페이먼츠 결제위젯 SDK (v2) → window.TossPayments -->
+  <script src="https://js.tosspayments.com/v2/standard"></script>
   <!-- React 18 + Babel (인라인 JSX) -->
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
@@ -31,6 +33,9 @@
     const SUPABASE_ANON_KEY = 'sb_publishable_lpU174Ykn1vPFv9fmUJfxQ_tviU0Xa4';
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // 토스페이먼츠 클라이언트키(공개키 — 커밋/노출 OK). 시크릿키는 서버(api/confirm-payment.js)에서만 사용.
+    const TOSS_CLIENT_KEY = 'test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm';
+
     // 장바구니 조회 시 상품 정보를 함께 임베드 (products FK)
     const CART_SELECT = 'id, quantity, product_id, products ( id, name, price, image_url, description )';
 
@@ -38,6 +43,17 @@
     // 🛠️ 헬퍼
     // ============================================================
     const won = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+    // 주문번호가 길면 앞 8자리만 표시 (#ABC12345...)
+    const shortOrderId = (id) => (id && id.length > 8 ? `#${id.slice(0, 8)}...` : `#${id || ''}`);
+    // 주문일시 표기 (ko-KR)
+    const fmtDateTime = (iso) => {
+      if (!iso) return '-';
+      try {
+        return new Date(iso).toLocaleString('ko-KR', {
+          year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        });
+      } catch { return '-'; }
+    };
 
     function friendly(err) {
       const m = (err && err.message) || String(err || '알 수 없는 오류');
@@ -386,12 +402,11 @@
     // ============================================================
     // 🛒 내 장바구니 (로그인 필수)
     // ============================================================
-    function CartView({ onCartChange, onShop, onToast }) {
+    function CartView({ onCartChange, onShop, onToast, onCheckout }) {
       const [items, setItems] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState('');
       const [busyId, setBusyId] = useState(null);
-      const [ordering, setOrdering] = useState(false);
 
       const load = useCallback(async () => {
         setLoading(true); setError('');
@@ -438,7 +453,7 @@
       const count = items.reduce((s, i) => s + i.quantity, 0);
 
       const handleOrder = () => {
-        setOrdering(true); // "준비 중" 모달
+        onCheckout(); // 결제(체크아웃) 화면으로 전환
       };
 
       if (loading) return <Spinner label="장바구니를 불러오는 중..." />;
@@ -506,22 +521,316 @@
                   </div>
                 </div>
                 <Button variant="accent" size="lg" onClick={handleOrder} className="w-full mt-5">주문하기</Button>
-                <p className="text-center text-xs text-slate-400 mt-3">결제 없이 담기·관리만 가능한 데모입니다.</p>
+                <p className="text-center text-xs text-slate-400 mt-3">🔒 토스페이먼츠 테스트 결제로 진행됩니다.</p>
               </div>
             </div>
           )}
+        </div>
+      );
+    }
 
-          {/* 주문하기 → 준비 중 안내 */}
-          <Modal open={ordering} onClose={() => setOrdering(false)}>
-            <div className="text-center">
-              <div className="text-5xl mb-3">🚧</div>
-              <h3 className="text-lg font-bold text-slate-800">주문 기능 준비 중이에요</h3>
-              <p className="text-sm text-slate-500 mt-2">
-                결제·주문 기능은 현재 <b>준비 중</b>입니다.<br />조금만 기다려 주세요!
-              </p>
-              <Button variant="primary" onClick={() => setOrdering(false)} className="w-full mt-5">확인</Button>
+    // ============================================================
+    // 💳 결제(체크아웃) — 토스페이먼츠 결제위젯
+    //   흐름: 장바구니 합계로 위젯 렌더 → "결제하기" → orders 행(PENDING) 저장
+    //         → widgets.requestPayment() → successUrl 리다이렉트 → 서버 confirm
+    // ============================================================
+    function CheckoutView({ session, onBack }) {
+      const [items, setItems] = useState(null); // null = 로딩 중
+      const [error, setError] = useState('');
+      const [ready, setReady] = useState(false); // 위젯 렌더 완료
+      const [paying, setPaying] = useState(false);
+      const widgetsRef = useRef(null);
+      const renderedRef = useRef(false); // 위젯 중복 렌더 방지 가드
+
+      // 장바구니를 서버에서 다시 읽어 신뢰 가능한 합계를 계산
+      useEffect(() => {
+        let alive = true;
+        (async () => {
+          const { data, error } = await db.from('cart').select(CART_SELECT).order('created_at');
+          if (!alive) return;
+          if (error) { setError(friendly(error)); setItems([]); return; }
+          setItems((data || []).filter((r) => r.products));
+        })();
+        return () => { alive = false; };
+      }, []);
+
+      const total = (items || []).reduce((s, i) => s + i.products.price * i.quantity, 0);
+      const count = (items || []).reduce((s, i) => s + i.quantity, 0);
+      const orderName = !items || items.length === 0
+        ? ''
+        : items.length === 1
+          ? items[0].products.name
+          : `${items[0].products.name} 외 ${items.length - 1}건`;
+
+      // 위젯 초기화 + 렌더 (금액 확정 후 1회만)
+      useEffect(() => {
+        if (!items || total <= 0) return;
+        let alive = true;
+        (async () => {
+          try {
+            if (!window.TossPayments) { setError('결제 모듈을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'); return; }
+            if (!widgetsRef.current) {
+              const toss = window.TossPayments(TOSS_CLIENT_KEY);
+              // 로그인 사용자 id 를 customerKey 로 사용 (비회원 방지)
+              widgetsRef.current = toss.widgets({ customerKey: session.user.id });
+            }
+            await widgetsRef.current.setAmount({ currency: 'KRW', value: total });
+            if (!renderedRef.current) {
+              renderedRef.current = true; // await 전에 잠금 → 중복 렌더 방지
+              await widgetsRef.current.renderPaymentMethods({ selector: '#payment-method', variantKey: 'DEFAULT' });
+              await widgetsRef.current.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' });
+              if (alive) setReady(true);
+            }
+          } catch (e) {
+            if (alive) setError(e && e.message ? e.message : '결제위젯 렌더링에 실패했습니다.');
+          }
+        })();
+        return () => { alive = false; };
+      }, [items, total]);
+
+      const handlePay = async () => {
+        setError(''); setPaying(true);
+        try {
+          // 고유·비예측 orderId (토스 6~64자 제약). 대문자 영숫자 → 앞 8자리 축약 표시가 깔끔.
+          const orderId = ('ORD' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)).toUpperCase();
+          // ★ 결제 요청 직전에 신뢰 금액을 서버(orders)에 저장 (user_id 는 RLS 기본값 auth.uid())
+          const { error: insErr } = await db.from('orders')
+            .insert({ order_id: orderId, amount: total, order_name: orderName });
+          if (insErr) throw insErr;
+
+          // 결제창 호출 → 성공 시 successUrl 로 리다이렉트(페이지 이동)
+          await widgetsRef.current.requestPayment({
+            orderId,
+            orderName,
+            successUrl: `${location.origin}${location.pathname}?payment=success`,
+            failUrl: `${location.origin}${location.pathname}?payment=fail`,
+            customerEmail: session.user.email,
+          });
+          // 성공 시 여기 도달 전에 리다이렉트됨
+        } catch (err) {
+          // 사용자가 결제창을 닫은 경우는 조용히 무시
+          if (err && err.code === 'USER_CANCEL') { /* noop */ }
+          else setError(err && err.message ? err.message : friendly(err));
+          setPaying(false);
+        }
+      };
+
+      if (items === null) return <Spinner label="결제 정보를 불러오는 중..." />;
+
+      if (items.length === 0) {
+        return (
+          <div className="animate-fadeIn max-w-lg mx-auto text-center py-16 bg-white rounded-2xl border border-slate-100">
+            <div className="text-5xl mb-3">🛒</div>
+            <p className="text-slate-400 text-sm">장바구니가 비어 있어 결제할 수 없어요.</p>
+            <div className="mt-4"><Button variant="secondary" onClick={onBack}>← 장바구니로</Button></div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="animate-fadeIn">
+          <div className="flex items-center gap-2 mb-5">
+            <button onClick={onBack} className="text-sm text-slate-500 hover:text-slate-700">← 장바구니</button>
+            <h2 className="text-2xl font-extrabold text-slate-800 ml-1">💳 결제하기</h2>
+          </div>
+
+          <Banner tone="error" message={error} onClose={() => setError('')} />
+
+          <div className="grid lg:grid-cols-3 gap-6 items-start">
+            {/* 위젯 영역 */}
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 p-4 sm:p-5">
+              <div id="payment-method"></div>
+              <div id="agreement"></div>
+              {!ready && <Spinner label="결제위젯을 불러오는 중..." />}
             </div>
-          </Modal>
+
+            {/* 주문 요약 + 결제 버튼 */}
+            <div className="lg:sticky lg:top-24 bg-white rounded-2xl border border-slate-100 p-5">
+              <h3 className="font-bold text-slate-800 mb-4">주문 요약</h3>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between text-slate-500">
+                  <span className="truncate mr-2">{orderName}</span><span className="flex-none">{count}개</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>배송비</span><span className="text-emerald-600 font-medium">무료</span>
+                </div>
+                <div className="border-t border-slate-100 my-3"></div>
+                <div className="flex justify-between items-baseline">
+                  <span className="font-bold text-slate-800">총 결제금액</span>
+                  <span className="text-2xl font-extrabold text-indigo-600">{won(total)}</span>
+                </div>
+              </div>
+              <Button variant="accent" size="lg" onClick={handlePay} disabled={!ready || paying} className="w-full mt-5">
+                {paying ? '결제창 여는 중...' : `${won(total)} 결제하기`}
+              </Button>
+              <p className="text-center text-xs text-slate-400 mt-3">
+                테스트 카드로 결제됩니다. 실제 청구되지 않아요.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // 💳 결제 결과 모달 (승인 중 / 완료 / 실패)
+    // ============================================================
+    function PaymentResultModal({ result, onClose }) {
+      if (!result) return null;
+      const { status } = result;
+      return (
+        <Modal open={true} onClose={status === 'processing' ? undefined : onClose}>
+          {status === 'processing' ? (
+            <div className="text-center py-4">
+              <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
+              <h3 className="text-lg font-bold text-slate-800">결제 승인 중...</h3>
+              <p className="text-sm text-slate-500 mt-2">토스페이먼츠 승인을 처리하고 있어요.</p>
+            </div>
+          ) : status === 'done' ? (
+            <div className="text-center">
+              <div className="text-5xl mb-3">✅</div>
+              <h3 className="text-lg font-bold text-slate-800">결제 완료!</h3>
+              <div className="mt-3 text-sm text-slate-500 space-y-1">
+                {result.orderName && <p className="font-semibold text-slate-700">{result.orderName}</p>}
+                {typeof result.amount === 'number' && <p>결제금액 <b className="text-indigo-600">{won(result.amount)}</b></p>}
+                {result.method && <p>결제수단 · {result.method}</p>}
+                {result.orderId && <p className="text-xs text-slate-400 break-all">주문번호 {result.orderId}</p>}
+              </div>
+              <Button variant="accent" onClick={onClose} className="w-full mt-5">쇼핑 계속하기</Button>
+            </div>
+          ) : (
+            <div className="text-center">
+              <div className="text-5xl mb-3">⚠️</div>
+              <h3 className="text-lg font-bold text-slate-800">결제에 실패했어요</h3>
+              <p className="text-sm text-slate-500 mt-2 whitespace-pre-wrap break-words">{result.message}</p>
+              {result.code && <p className="text-xs text-slate-400 mt-1">코드: {result.code}</p>}
+              <Button variant="primary" onClick={onClose} className="w-full mt-5">확인</Button>
+            </div>
+          )}
+        </Modal>
+      );
+    }
+
+    // ============================================================
+    // 📄 주문 상세 페이지 — 결제 내역(상품명 / 금액 / 주문번호 / 결제일 / 수단)
+    //   결제 완료 직후(justPaid) 또는 마이페이지에서 주문 클릭 시 진입
+    // ============================================================
+    function OrderDetailView({ order, onShop, onMyPage }) {
+      if (!order) return null;
+      const justPaid = !!order.justPaid;
+      const Row = ({ label, children, mono }) => (
+        <div className="flex items-start justify-between gap-4 py-3 border-b border-slate-100 last:border-0">
+          <span className="text-sm text-slate-500 flex-none">{label}</span>
+          <span className={`text-sm font-semibold text-slate-800 text-right break-all ${mono ? 'font-mono' : ''}`}>{children}</span>
+        </div>
+      );
+      return (
+        <div className="animate-fadeIn max-w-lg mx-auto">
+          {/* 상단 상태 */}
+          <div className="text-center mb-6">
+            <div className="text-5xl mb-2">{justPaid ? '✅' : '📄'}</div>
+            <h2 className="text-2xl font-extrabold text-slate-800">{justPaid ? '결제 완료!' : '주문 상세'}</h2>
+            <p className="text-slate-500 text-sm mt-1">
+              {justPaid ? '결제가 정상적으로 완료되었어요.' : '결제 내역을 확인하세요.'}
+            </p>
+          </div>
+
+          {/* 결제 내역 카드 */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 sm:p-6">
+            <Row label="상품명">{order.orderName || '-'}</Row>
+            <Row label="결제금액"><span className="text-indigo-600 text-base">{won(order.amount)}</span></Row>
+            <Row label="주문번호" mono>{order.orderId || '-'}</Row>
+            {order.paidAt && <Row label="주문일시">{fmtDateTime(order.paidAt)}</Row>}
+            {order.method && <Row label="결제수단">{order.method}</Row>}
+            <Row label="주문상태">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-xs font-bold">
+                {order.status === 'DONE' ? '결제완료' : (order.status || '-')}
+              </span>
+            </Row>
+          </div>
+
+          <div className="flex gap-2 mt-6">
+            <Button variant="secondary" onClick={onShop} className="flex-1">🛍️ 쇼핑 계속하기</Button>
+            <Button variant="accent" onClick={onMyPage} className="flex-1">🧾 주문 내역 보기</Button>
+          </div>
+          {justPaid && (
+            <p className="text-center text-xs text-slate-400 mt-3">테스트 결제라 실제로 청구되지 않았어요.</p>
+          )}
+        </div>
+      );
+    }
+
+    // ============================================================
+    // 👤 마이페이지 — 내 주문 내역 (본인 것만 · 최신순 · 빈 상태)
+    //   보안: RLS + 쿼리에서도 반드시 user_id = 로그인 uid 로 필터
+    // ============================================================
+    function MyPageView({ session, onOpenOrder, onShop }) {
+      const [orders, setOrders] = useState(null); // null = 로딩 중
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        let alive = true;
+        (async () => {
+          // ★ 본인 주문만: user_id 명시 필터 + 결제완료(DONE) + 최신순(paid_at DESC)
+          const { data, error } = await db
+            .from('orders')
+            .select('order_id, order_name, amount, paid_at, status')
+            .eq('user_id', session.user.id)
+            .eq('status', 'DONE')
+            .order('paid_at', { ascending: false, nullsFirst: false });
+          if (!alive) return;
+          if (error) { setError(friendly(error)); setOrders([]); return; }
+          setOrders(data || []);
+        })();
+        return () => { alive = false; };
+      }, [session]);
+
+      if (orders === null) return <Spinner label="주문 내역을 불러오는 중..." />;
+
+      return (
+        <div className="animate-fadeIn max-w-3xl mx-auto">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-2xl font-extrabold text-slate-800">👤 마이페이지</h2>
+            {orders.length > 0 && <span className="text-sm text-slate-400">주문 {orders.length}건</span>}
+          </div>
+          <p className="text-sm text-slate-400 mb-5 truncate">{session.user.email} 님의 주문 내역</p>
+
+          <Banner tone="error" message={error} onClose={() => setError('')} />
+
+          {orders.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-2xl border border-slate-100">
+              <div className="text-5xl mb-3">🧾</div>
+              <p className="text-slate-500 text-sm">아직 주문 내역이 없어요</p>
+              <div className="mt-4"><Button variant="accent" onClick={onShop}>상품 보러 가기</Button></div>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {orders.map((o) => (
+                <li key={o.order_id}>
+                  <button onClick={() => onOpenOrder({
+                      orderId: o.order_id, orderName: o.order_name, amount: o.amount,
+                      paidAt: o.paid_at, status: o.status,
+                    })}
+                    className="w-full text-left bg-white rounded-2xl border border-slate-100 p-4 sm:p-5 hover:shadow-md hover:border-indigo-200 transition group">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-slate-800 truncate group-hover:text-indigo-600">{o.order_name}</h3>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-xs text-slate-400">
+                          <span className="font-mono">{shortOrderId(o.order_id)}</span>
+                          <span>·</span>
+                          <span>{fmtDateTime(o.paid_at)}</span>
+                        </div>
+                      </div>
+                      <div className="flex-none text-right">
+                        <div className="font-extrabold text-slate-900">{won(o.amount)}</div>
+                        <div className="text-[11px] text-emerald-600 font-semibold mt-0.5">결제완료 ›</div>
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       );
     }
@@ -531,11 +840,13 @@
     // ============================================================
     function App() {
       const [session, setSession] = useState(undefined); // undefined = 확인 중
-      const [view, setView] = useState('shop');          // 'shop' | 'cart' | 'auth'
+      const [view, setView] = useState('shop');          // 'shop' | 'cart' | 'checkout' | 'auth' | 'mypage' | 'order'
       const [authReason, setAuthReason] = useState('');
       const [cartCount, setCartCount] = useState(0);
       const [addingId, setAddingId] = useState(null);
       const [toast, setToast] = useState(null);
+      const [payResult, setPayResult] = useState(null);  // 결제 승인 진행/실패 모달: {status:'processing'|'fail', ...}
+      const [order, setOrder] = useState(null);          // 주문 상세 페이지에서 볼 주문
       const afterAuth = useRef('shop');
 
       const showToast = useCallback((t) => {
@@ -553,6 +864,57 @@
           if (event === 'SIGNED_OUT') { setView('shop'); setCartCount(0); }
         });
         return () => sub.subscription.unsubscribe();
+      }, []);
+
+      // 💳 결제 리다이렉트 처리 (successUrl / failUrl → 서버 confirm) — 앱 로드 시 1회
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const payment = params.get('payment');
+        if (payment !== 'success' && payment !== 'fail') return;
+
+        // URL 즉시 정리: 새로고침 시 재confirm·민감 파라미터 노출 방지
+        window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+
+        if (payment === 'fail') {
+          setPayResult({ status: 'fail', code: params.get('code'),
+            message: params.get('message') || '결제가 취소되었거나 실패했습니다.' });
+          return;
+        }
+        // payment === 'success' → 토스가 붙여준 paymentKey/orderId/amount 로 서버 승인
+        const paymentKey = params.get('paymentKey');
+        const orderId = params.get('orderId');
+        const amount = params.get('amount');
+        if (!paymentKey || !orderId || !amount) {
+          setPayResult({ status: 'fail', message: '결제 정보가 올바르지 않습니다. (paymentKey/orderId/amount 누락)' });
+          return;
+        }
+        setPayResult({ status: 'processing' });
+        (async () => {
+          try {
+            const { data } = await db.auth.getSession();
+            const accessToken = data.session && data.session.access_token;
+            const res = await fetch('/api/confirm-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ paymentKey, orderId, amount: Number(amount), accessToken }),
+            });
+            const out = await res.json();
+            if (res.ok && out.ok) {
+              // 승인 성공 → 결제 진행 모달 닫고 주문 상세 페이지로 이동
+              setPayResult(null);
+              setOrder({
+                orderId: out.orderId, orderName: out.orderName, amount: out.amount,
+                method: out.method, paidAt: out.paidAt || out.approvedAt, status: 'DONE', justPaid: true,
+              });
+              setView('order');
+              setCartCount(0); // 서버가 장바구니를 비웠음
+            } else {
+              setPayResult({ status: 'fail', code: out.code, message: out.message || '결제 승인에 실패했습니다.' });
+            }
+          } catch (e) {
+            setPayResult({ status: 'fail', message: (e && e.message) || '결제 승인 요청 중 오류가 발생했습니다.' });
+          }
+        })();
       }, []);
 
       // 장바구니 개수 새로고침
@@ -599,6 +961,17 @@
         setView('cart');
       };
 
+      const goMyPage = () => {
+        if (!session) { goAuth('마이페이지는 로그인이 필요해요.', 'mypage'); return; }
+        setView('mypage');
+      };
+
+      // 주문 상세 페이지 열기 (마이페이지 목록에서 클릭)
+      const openOrder = (o) => { setOrder(o); setView('order'); };
+
+      // 결제 실패 모달 닫기
+      const closePayResult = () => setPayResult(null);
+
       if (session === undefined) {
         return <div className="min-h-screen flex items-center justify-center"><Spinner label="불러오는 중..." /></div>;
       }
@@ -622,6 +995,13 @@
                     </span>
                   )}
                 </button>
+                {/* 마이페이지 (로그인 시) */}
+                {session && (
+                  <button onClick={goMyPage}
+                    className="px-3 py-2 rounded-xl hover:bg-slate-100 transition text-sm font-semibold text-slate-700 flex items-center gap-1.5">
+                    👤 <span className="hidden sm:inline">마이페이지</span>
+                  </button>
+                )}
                 {/* 로그인 상태 */}
                 {session ? (
                   <div className="flex items-center gap-2">
@@ -643,7 +1023,17 @@
                 onNeedLogin={(reason) => { showToast({ tone: 'info', msg: '🔒 로그인이 필요해요' }); goAuth(reason, 'shop'); }} />
             )}
             {view === 'cart' && session && (
-              <CartView onCartChange={refreshCart} onShop={() => setView('shop')} onToast={showToast} />
+              <CartView onCartChange={refreshCart} onShop={() => setView('shop')} onToast={showToast}
+                onCheckout={() => setView('checkout')} />
+            )}
+            {view === 'checkout' && session && (
+              <CheckoutView session={session} onBack={() => setView('cart')} />
+            )}
+            {view === 'mypage' && session && (
+              <MyPageView session={session} onOpenOrder={openOrder} onShop={() => setView('shop')} />
+            )}
+            {view === 'order' && (
+              <OrderDetailView order={order} onShop={() => { setView('shop'); refreshCart(); }} onMyPage={goMyPage} />
             )}
             {view === 'auth' && (
               <AuthScreen reason={authReason} onBack={() => { setAuthReason(''); setView('shop'); }} />
@@ -655,6 +1045,7 @@
           </footer>
 
           <Toast toast={toast} />
+          <PaymentResultModal result={payResult} onClose={closePayResult} />
         </div>
       );
     }
