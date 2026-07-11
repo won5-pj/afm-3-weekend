@@ -12,6 +12,8 @@
 //   - 정적 파일(index.html)은 Node 내장 http 로 직접 서빙
 
 const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const postgres = require('postgres');
@@ -40,6 +42,13 @@ const sql = postgres(DATABASE_URL, {
   idle_timeout: 20,
   connect_timeout: 15,
 });
+
+// ImageKit (프로필 이미지 업로드) — private key 는 서버에서만 사용
+const IMAGEKIT = {
+  urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || 'https://ik.imagekit.io/testapp',
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY || '',
+  privateKey: process.env.IMAGEKIT_PRIVATE_KEY || '',
+};
 
 // 허용 카테고리 (참고용 — 서버는 자유 입력도 허용하되 UI 는 아래 목록을 제공)
 const CATEGORIES = {
@@ -117,6 +126,24 @@ async function initDb() {
     }
     console.log(`예산 시드 ${SEED_BUDGETS.length}건을 삽입했습니다.`);
   }
+
+  // 프로필 테이블 (단일 사용자 — id=1 한 행만 유지). 없으면 기본 행 1개 생성.
+  await sql`
+    create table if not exists profile (
+      id         smallint primary key default 1,
+      name       text,
+      email      text,
+      bio        text,
+      avatar_url text,
+      updated_at timestamptz not null default now(),
+      constraint profile_singleton check (id = 1)
+    )
+  `;
+  await sql`
+    insert into profile (id, name, bio)
+    values (1, '나', '가계부와 함께 알뜰하게 살아가는 중 💰')
+    on conflict (id) do nothing
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +258,99 @@ async function setBudget(category, amount) {
   return { category, amount };
 }
 
+// 프로필 조회 (단일 행)
+async function getProfile() {
+  const [row] = await sql`
+    select name, email, bio, avatar_url,
+           to_char(updated_at, 'YYYY-MM-DD HH24:MI') as updated_at
+    from profile where id = 1
+  `;
+  return row || { name: null, email: null, bio: null, avatar_url: null, updated_at: null };
+}
+
+// 프로필 저장 (name/email/bio 갱신, avatar_url 은 별도 엔드포인트에서)
+async function saveProfile({ name, email, bio }) {
+  const [row] = await sql`
+    update profile set
+      name = ${name || null},
+      email = ${email || null},
+      bio = ${bio || null},
+      updated_at = now()
+    where id = 1
+    returning name, email, bio, avatar_url,
+              to_char(updated_at, 'YYYY-MM-DD HH24:MI') as updated_at
+  `;
+  return row;
+}
+
+// 아바타 URL 갱신
+async function setAvatarUrl(url) {
+  const [row] = await sql`
+    update profile set avatar_url = ${url}, updated_at = now()
+    where id = 1
+    returning avatar_url
+  `;
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// ImageKit 서버사이드 업로드
+//   - client 가 base64(data URL) 로 보낸 이미지를 서버가 ImageKit 에 업로드
+//   - private key 는 서버에만 존재 (Basic auth) → 클라이언트에 노출되지 않음
+//   - 응답의 url 을 DB(profile.avatar_url)에 저장
+// ---------------------------------------------------------------------------
+function uploadToImageKit({ fileName, fileBase64, folder }) {
+  return new Promise((resolve, reject) => {
+    if (!IMAGEKIT.privateKey) {
+      return reject(new Error('IMAGEKIT_PRIVATE_KEY 가 설정되지 않았습니다 (.env 확인).'));
+    }
+    // data URL 접두사(data:image/png;base64,) 가 있으면 제거 — ImageKit 은 순수 base64 를 받음
+    const base64 = String(fileBase64).replace(/^data:[^;]+;base64,/, '');
+
+    const boundary = '----mybudget' + crypto.randomBytes(12).toString('hex');
+    const field = (name, value) =>
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+    const body = Buffer.from(
+      field('file', base64) +
+      field('fileName', fileName || 'avatar.jpg') +
+      field('folder', folder || '/mybudget-avatars') +
+      field('useUniqueFileName', 'true') +
+      `--${boundary}--\r\n`,
+      'utf8'
+    );
+
+    const auth = Buffer.from(IMAGEKIT.privateKey + ':').toString('base64');
+    const req = https.request(
+      {
+        hostname: 'upload.imagekit.io',
+        path: '/api/v1/files/upload',
+        method: 'POST',
+        headers: {
+          Authorization: 'Basic ' + auth,
+          'Content-Type': 'multipart/form-data; boundary=' + boundary,
+          'Content-Length': body.length,
+        },
+      },
+      (resp) => {
+        let data = '';
+        resp.on('data', (c) => (data += c));
+        resp.on('end', () => {
+          let json = {};
+          try { json = JSON.parse(data); } catch (e) {}
+          if (resp.statusCode >= 200 && resp.statusCode < 300 && json.url) {
+            resolve(json); // { url, fileId, thumbnailUrl, ... }
+          } else {
+            reject(new Error(json.message || `ImageKit 업로드 실패 (HTTP ${resp.statusCode})`));
+          }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 헬퍼: 응답 / 본문 파싱
 // ---------------------------------------------------------------------------
@@ -239,12 +359,12 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = 1e6) {
   return new Promise((resolve, reject) => {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      if (raw.length > 1e6) {
+      if (raw.length > maxBytes) {
         reject(new Error('본문이 너무 큽니다.'));
         req.destroy();
       }
@@ -297,6 +417,37 @@ const server = http.createServer(async (req, res) => {
     // --- GET /api/categories  (UI 용 카테고리 목록) ---
     if (method === 'GET' && pathname === '/api/categories') {
       return sendJson(res, 200, CATEGORIES);
+    }
+
+    // --- GET /api/profile  (프로필 조회) ---
+    if (method === 'GET' && pathname === '/api/profile') {
+      return sendJson(res, 200, await getProfile());
+    }
+
+    // --- PUT /api/profile  (프로필 저장 {name, email, bio}) ---
+    if (method === 'PUT' && pathname === '/api/profile') {
+      const body = await readJsonBody(req);
+      const name = typeof body.name === 'string' ? body.name.trim().slice(0, 60) : '';
+      const email = typeof body.email === 'string' ? body.email.trim().slice(0, 120) : '';
+      const bio = typeof body.bio === 'string' ? body.bio.trim().slice(0, 200) : '';
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return sendJson(res, 400, { error: '이메일 형식이 올바르지 않습니다.' });
+      }
+      const saved = await saveProfile({ name, email, bio });
+      return sendJson(res, 200, saved);
+    }
+
+    // --- POST /api/profile/avatar  (프로필 이미지 업로드 → ImageKit → DB) ---
+    if (method === 'POST' && pathname === '/api/profile/avatar') {
+      const body = await readJsonBody(req, 12e6); // 이미지 base64 는 최대 ~12MB 허용
+      const fileBase64 = body.fileBase64;
+      const fileName = (body.fileName || 'avatar.jpg').replace(/[^\w.\-]/g, '_');
+      if (!fileBase64 || typeof fileBase64 !== 'string') {
+        return sendJson(res, 400, { error: '업로드할 이미지(fileBase64)가 없습니다.' });
+      }
+      const result = await uploadToImageKit({ fileName, fileBase64 });
+      const saved = await setAvatarUrl(result.url);
+      return sendJson(res, 200, { avatar_url: saved.avatar_url, fileId: result.fileId });
     }
 
     // --- GET /api/summary  (카테고리별 합계 / GROUP BY) ---

@@ -22,6 +22,18 @@ create table if not exists budgets (
   amount   numeric(14, 2) not null check (amount >= 0)
 );
 
+-- 프로필 테이블 (단일 사용자 — id=1 한 행만 유지)
+-- 아바타 이미지는 ImageKit 에 업로드하고 URL 만 avatar_url 에 저장한다.
+create table if not exists profile (
+  id         smallint primary key default 1,
+  name       text,
+  email      text,
+  bio        text,
+  avatar_url text,                                  -- ImageKit 이미지 URL
+  updated_at timestamptz not null default now(),
+  constraint profile_singleton check (id = 1)       -- 항상 한 행(id=1)만 존재
+);
+
 -- 카테고리별 합계는 GROUP BY 로 계산 (server.js /api/summary 에서 사용)
 -- 예시:
 --   select type, category, sum(amount) as total, count(*) as count
