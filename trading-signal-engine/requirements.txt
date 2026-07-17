@@ -1,0 +1,5 @@
+# RuleKeeper — M1 (데이터 수신 + 골격) 의존성
+# 지표(pandas-ta 등)·텔레그램·supabase는 이후 마일스톤에서 추가.
+requests>=2.31,<3
+APScheduler>=3.10,<4
+python-dotenv>=1.0,<2
