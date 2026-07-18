@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>클로드(Claude) — Anthropic의 AI 어시스턴트</title>
+
+  <!-- ⚠️ 모든 CDN 버전 고정. Babel 은 반드시 7.x (8.x 는 inline text/babel 미지원). -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sf: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', '"Segoe UI"', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            applewhite: '#fbfbfd',
+            applegray: '#f5f5f7',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+    body { overflow-x: hidden; }
+
+    /* 스크롤 등장 애니메이션 (IntersectionObserver 로 .is-visible 토글) */
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+    .reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .reveal { transition: none; opacity: 1; transform: none; }
+    }
+
+    /* 은은한 그라디언트 텍스트 (포인트 컬러) */
+    .gradient-text {
+      background: linear-gradient(105deg, #d97757 0%, #b8623f 45%, #6e59d9 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    /* 히어로 배경의 부드러운 발광 */
+    .hero-glow {
+      background:
+        radial-gradient(60% 50% at 50% 0%, rgba(217,119,87,0.16) 0%, rgba(217,119,87,0) 70%),
+        radial-gradient(45% 45% at 78% 30%, rgba(110,89,217,0.14) 0%, rgba(110,89,217,0) 70%);
+    }
+    .dark .hero-glow {
+      background:
+        radial-gradient(60% 55% at 50% 0%, rgba(217,119,87,0.22) 0%, rgba(217,119,87,0) 72%),
+        radial-gradient(48% 48% at 78% 28%, rgba(110,89,217,0.20) 0%, rgba(110,89,217,0) 72%);
+    }
+
+    /* 히어로 심볼 은은한 부유 애니메이션 */
+    @keyframes floaty {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50% { transform: translateY(-10px) rotate(1.5deg); }
+    }
+    .floaty { animation: floaty 7s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .floaty { animation: none; } }
+
+    ::selection { background: rgba(217,119,87,0.22); }
+  </style>
+</head>
+<body class="bg-applewhite dark:bg-black">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ========================================
+    // 🪝 Custom Hooks
+    // ========================================
+
+    // 스크롤 등장 애니메이션용 훅 — 요소가 뷰포트에 들어오면 is-visible 부여
+    function useReveal() {
+      useEffect(() => {
+        const els = document.querySelectorAll('.reveal');
+        if (!('IntersectionObserver' in window)) {
+          els.forEach((el) => el.classList.add('is-visible'));
+          return;
+        }
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                entry.target.classList.add('is-visible');
+                io.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.12, rootMargin: '0px 0px -8% 0px' }
+        );
+        els.forEach((el) => io.observe(el));
+        return () => io.disconnect();
+      }, []);
+    }
+
+    // 다크모드 토글 훅 — 시스템 설정 초기값, <html> 에 class 토글
+    function useDarkMode() {
+      const [dark, setDark] = useState(() =>
+        window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+      );
+      useEffect(() => {
+        const root = document.documentElement;
+        root.classList.toggle('dark', dark);
+      }, [dark]);
+      return [dark, setDark];
+    }
+
+    // ========================================
+    // 🎨 Design System Components
+    // ========================================
+
+    // 섹션 래퍼 — 배경 교차 + 넉넉한 여백
+    function Section({ id, tone = 'white', className = '', children }) {
+      const bg =
+        tone === 'gray'
+          ? 'bg-applegray dark:bg-neutral-950'
+          : tone === 'black'
+          ? 'bg-black'
+          : 'bg-applewhite dark:bg-black';
+      return (
+        <section id={id} className={`w-full px-6 ${bg} ${className}`}>
+          <div className="mx-auto max-w-6xl">{children}</div>
+        </section>
+      );
+    }
+
+    // 섹션 제목 블록
+    function SectionHeading({ eyebrow, title, subtitle, dark = false }) {
+      return (
+        <div className="reveal text-center max-w-3xl mx-auto">
+          {eyebrow && (
+            <p className={`text-sm font-semibold tracking-wide mb-3 ${dark ? 'text-[#e0a58c]' : 'text-[#d97757]'}`}>
+              {eyebrow}
+            </p>
+          )}
+          <h2 className={`font-sf font-semibold tracking-tight text-3xl sm:text-4xl md:text-5xl leading-tight ${dark ? 'text-white' : 'text-neutral-900 dark:text-white'}`}>
+            {title}
+          </h2>
+          {subtitle && (
+            <p className={`mt-4 text-lg sm:text-xl leading-relaxed ${dark ? 'text-neutral-400' : 'text-neutral-500 dark:text-neutral-400'}`}>
+              {subtitle}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // 프리미엄 카드
+    function Card({ className = '', children }) {
+      return (
+        <div
+          className={`rounded-3xl bg-white dark:bg-neutral-900 border border-black/5 dark:border-white/10 shadow-[0_2px_20px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_40px_rgba(0,0,0,0.08)] transition-shadow duration-500 ${className}`}
+        >
+          {children}
+        </div>
+      );
+    }
+
+    // 알약형 버튼 (애플 스타일)
+    function Pill({ children, href = '#', primary = false, className = '' }) {
+      const base =
+        'inline-flex items-center justify-center rounded-full px-6 py-3 text-base font-medium transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d97757]/60';
+      const style = primary
+        ? 'bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-white dark:text-black dark:hover:bg-neutral-200'
+        : 'text-[#d97757] hover:text-[#b8623f] hover:underline underline-offset-4';
+      return (
+        <a href={href} className={`${base} ${style} ${className}`}>
+          {children}
+        </a>
+      );
+    }
+
+    // ========================================
+    // 🧩 Layout — 애플식 반투명 고정 네비게이션
+    // ========================================
+    function Navbar({ dark, onToggleDark }) {
+      const [scrolled, setScrolled] = useState(false);
+      useEffect(() => {
+        const onScroll = () => setScrolled(window.scrollY > 8);
+        onScroll();
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+      }, []);
+
+      const links = [
+        ['소개', '#about'],
+        ['함께하는 일', '#skills'],
+        ['모델', '#models'],
+        ['Claude Code', '#code'],
+        ['안전', '#safety'],
+      ];
+
+      return (
+        <header
+          className={`fixed top-0 inset-x-0 z-50 transition-colors duration-300 ${
+            scrolled
+              ? 'bg-white/70 dark:bg-black/60 backdrop-blur-xl border-b border-black/5 dark:border-white/10'
+              : 'bg-transparent border-b border-transparent'
+          }`}
+        >
+          <nav className="mx-auto max-w-6xl h-12 px-6 flex items-center justify-between">
+            <a href="#top" className="flex items-center gap-2 shrink-0" aria-label="클로드 홈">
+              <ClaudeMark className="w-6 h-6" />
+              <span className="font-sf font-semibold text-[15px] text-neutral-900 dark:text-white">Claude</span>
+            </a>
+
+            <ul className="hidden md:flex items-center gap-7">
+              {links.map(([label, href]) => (
+                <li key={href}>
+                  <a
+                    href={href}
+                    className="text-[13px] text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white transition-colors"
+                  >
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+
+            <button
+              onClick={onToggleDark}
+              aria-label={dark ? '라이트 모드로 전환' : '다크 모드로 전환'}
+              className="ml-4 shrink-0 w-9 h-9 grid place-items-center rounded-full text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            >
+              {dark ? '☀️' : '🌙'}
+            </button>
+          </nav>
+        </header>
+      );
+    }
+
+    // 클로드 심볼 마크 (인라인 SVG — 자기완결성)
+    function ClaudeMark({ className = '' }) {
+      return (
+        <svg viewBox="0 0 40 40" className={className} aria-hidden="true">
+          <defs>
+            <linearGradient id="cm-g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#d97757" />
+              <stop offset="100%" stopColor="#6e59d9" />
+            </linearGradient>
+          </defs>
+          <rect x="2" y="2" width="36" height="36" rx="10" fill="url(#cm-g)" />
+          <path
+            d="M13.2 26.5 L18.7 13.5 h2.8 l5.5 13 h-3 l-1.15-2.9 h-5.6 L20.1 13.5"
+            fill="none"
+          />
+          <text x="20" y="27" textAnchor="middle" fontFamily="-apple-system, Segoe UI, sans-serif" fontWeight="700" fontSize="18" fill="#fff">✳</text>
+        </svg>
+      );
+    }
+
+    // ========================================
+    // 📄 Page Sections
+    // ========================================
+
+    // 1. 히어로
+    function Hero() {
+      return (
+        <section id="top" className="relative pt-32 pb-24 sm:pt-40 sm:pb-32 px-6 text-center overflow-hidden">
+          <div className="hero-glow pointer-events-none absolute inset-0 -z-10" />
+
+          <div className="floaty mx-auto mb-9 w-20 h-20 sm:w-24 sm:h-24">
+            <ClaudeMark className="w-full h-full drop-shadow-[0_10px_30px_rgba(217,119,87,0.35)]" />
+          </div>
+
+          <h1 className="reveal is-visible font-sf font-semibold tracking-tight text-4xl sm:text-6xl md:text-7xl leading-[1.05] text-neutral-900 dark:text-white">
+            만나서 반가워요,
+            <br />
+            저는 <span className="gradient-text">클로드</span>예요.
+          </h1>
+
+          <p className="mt-6 mx-auto max-w-2xl text-lg sm:text-2xl leading-relaxed text-neutral-500 dark:text-neutral-400">
+            Anthropic이 만든 AI 어시스턴트. 도움이 되고, 정직하며, 안전하게 —
+            당신의 생각과 일에 함께합니다.
+          </p>
+
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+            <Pill href="#about" primary>
+              더 알아보기
+            </Pill>
+            <Pill href="#skills">
+              무엇을 할 수 있나요 →
+            </Pill>
+          </div>
+
+          <p className="mt-14 text-xs uppercase tracking-[0.2em] text-neutral-400 dark:text-neutral-600">
+            Helpful · Honest · Harmless
+          </p>
+        </section>
+      );
+    }
+
+    // 2. "클로드는 이런 AI예요" — 핵심 소개 카드
+    const VALUES = [
+      {
+        emoji: '🤝',
+        title: '도움이 되는',
+        desc: '질문의 맥락을 깊이 이해하고, 정말 필요한 답과 다음 한 걸음을 함께 찾아드려요.',
+      },
+      {
+        emoji: '🕯️',
+        title: '정직한',
+        desc: '모르는 것은 모른다고 말해요. 지어내기보다 근거와 한계를 솔직하게 밝히는 걸 택합니다.',
+      },
+      {
+        emoji: '🛡️',
+        title: '안전한',
+        desc: '해가 되는 요청은 정중히 거절하고, 신중하고 책임 있는 방식으로 돕는 것을 우선합니다.',
+      },
+      {
+        emoji: '🌿',
+        title: '담백하고 따뜻한',
+        desc: '과장 없이 차분하게, 하지만 사람의 온기를 담아 대화하려고 해요.',
+      },
+    ];
+
+    function AboutSection() {
+      return (
+        <Section id="about" tone="gray" className="py-24 sm:py-32">
+          <SectionHeading
+            eyebrow="클로드는 이런 AI예요"
+            title="세 가지 약속으로 함께합니다"
+            subtitle="Anthropic은 클로드가 helpful · honest · harmless — 도움이 되고, 정직하며, 안전한 AI가 되도록 설계했습니다."
+          />
+          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {VALUES.map((v, i) => (
+              <Card key={v.title} className="reveal p-7" >
+                <div className="text-4xl mb-4" aria-hidden="true">{v.emoji}</div>
+                <h3 className="font-sf font-semibold text-xl text-neutral-900 dark:text-white">{v.title}</h3>
+                <p className="mt-2 text-[15px] leading-relaxed text-neutral-500 dark:text-neutral-400">{v.desc}</p>
+              </Card>
+            ))}
+          </div>
+        </Section>
+      );
+    }
+
+    // 3. "무엇이든 함께해요" — 잘하는 일 그리드
+    const SKILLS = [
+      { emoji: '💻', title: '코딩 & 디버깅', desc: '여러 언어로 코드를 짜고, 버그를 찾고, 리팩터링까지.' },
+      { emoji: '✍️', title: '글쓰기', desc: '초안부터 다듬기까지 — 이메일, 에세이, 카피, 문서.' },
+      { emoji: '📊', title: '분석 & 추론', desc: '복잡한 문제를 단계로 나눠 논리적으로 풀어드려요.' },
+      { emoji: '🌐', title: '번역', desc: '자연스러운 뉘앙스를 살린 다국어 번역.' },
+      { emoji: '📝', title: '요약', desc: '긴 문서·회의록·논문을 핵심만 간결하게.' },
+      { emoji: '💡', title: '브레인스토밍', desc: '아이디어를 함께 굴리고 확장하는 파트너.' },
+      { emoji: '🖼️', title: '이미지·문서 이해', desc: '그림, 표, PDF 속 내용을 읽고 설명해요.' },
+      { emoji: '📚', title: '긴 문맥 이해', desc: '방대한 자료도 앞뒤 맥락을 놓치지 않고 파악.' },
+    ];
+
+    function SkillsSection() {
+      return (
+        <Section id="skills" tone="white" className="py-24 sm:py-32">
+          <SectionHeading
+            eyebrow="무엇이든 함께해요"
+            title="이런 일들을 잘합니다"
+            subtitle="일상의 작은 질문부터 깊은 사고가 필요한 작업까지, 폭넓게 도와드려요."
+          />
+          <div className="mt-14 grid gap-5 grid-cols-2 lg:grid-cols-4">
+            {SKILLS.map((s) => (
+              <Card key={s.title} className="reveal p-6 text-center">
+                <div className="text-4xl mb-3" aria-hidden="true">{s.emoji}</div>
+                <h3 className="font-sf font-semibold text-[17px] text-neutral-900 dark:text-white">{s.title}</h3>
+                <p className="mt-1.5 text-[13.5px] leading-relaxed text-neutral-500 dark:text-neutral-400">{s.desc}</p>
+              </Card>
+            ))}
+          </div>
+        </Section>
+      );
+    }
+
+    // 4. 모델 라인업 — 애플 제품 비교 카드
+    const MODELS = [
+      {
+        name: 'Claude Opus 4.8',
+        tag: '가장 지능이 높은',
+        emoji: '🧠',
+        desc: '가장 어려운 추론과 복잡한 코딩·연구 과제를 위한 최상위 지능 모델.',
+        points: ['깊은 추론', '복잡한 에이전트 작업', '고난도 코딩'],
+        accent: 'from-[#6e59d9] to-[#9b6ef0]',
+        featured: true,
+      },
+      {
+        name: 'Claude Sonnet',
+        tag: '균형형',
+        emoji: '⚖️',
+        desc: '지능과 속도의 균형. 대부분의 일상 업무에 두루 알맞은 만능형.',
+        points: ['빠른 실무 처리', '비용 대비 성능', '넓은 활용 범위'],
+        accent: 'from-[#d97757] to-[#e0a58c]',
+        featured: false,
+      },
+      {
+        name: 'Claude Haiku 4.5',
+        tag: '가장 빠르고 가벼운',
+        emoji: '⚡',
+        desc: '즉각적인 응답이 필요한 순간을 위한 빠르고 경제적인 모델.',
+        points: ['실시간 응답', '가벼운 작업', '대량 처리'],
+        accent: 'from-[#3aa17e] to-[#63c7a5]',
+        featured: false,
+      },
+    ];
+
+    function ModelsSection() {
+      return (
+        <Section id="models" tone="gray" className="py-24 sm:py-32">
+          <SectionHeading
+            eyebrow="Claude 5 제품군"
+            title="필요에 꼭 맞는 모델"
+            subtitle="같은 마음, 다른 속도. 목적에 따라 지능·속도·비용의 균형을 골라 쓰세요."
+          />
+          <div className="mt-14 grid gap-6 md:grid-cols-3 items-stretch">
+            {MODELS.map((m) => (
+              <Card
+                key={m.name}
+                className={`reveal p-8 flex flex-col relative overflow-hidden ${
+                  m.featured ? 'ring-2 ring-[#6e59d9]/40' : ''
+                }`}
+              >
+                {m.featured && (
+                  <span className="absolute top-5 right-5 text-[11px] font-semibold px-3 py-1 rounded-full bg-[#6e59d9]/10 text-[#6e59d9] dark:text-[#b7a5f5]">
+                    최상위
+                  </span>
+                )}
+                <div className={`w-14 h-14 rounded-2xl grid place-items-center text-2xl bg-gradient-to-br ${m.accent} shadow-lg`} aria-hidden="true">
+                  <span className="drop-shadow">{m.emoji}</span>
+                </div>
+                <p className="mt-5 text-xs font-semibold tracking-wide text-neutral-400 uppercase">{m.tag}</p>
+                <h3 className="mt-1 font-sf font-semibold text-2xl text-neutral-900 dark:text-white">{m.name}</h3>
+                <p className="mt-3 text-[15px] leading-relaxed text-neutral-500 dark:text-neutral-400">{m.desc}</p>
+                <ul className="mt-5 space-y-2">
+                  {m.points.map((p) => (
+                    <li key={p} className="flex items-center gap-2 text-[14px] text-neutral-600 dark:text-neutral-300">
+                      <span className="text-[#d97757]">✓</span> {p}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            ))}
+          </div>
+          <p className="reveal mt-8 text-center text-sm text-neutral-400 dark:text-neutral-500">
+            Opus는 가장 지능이 높은 모델, Haiku는 가장 빠른 모델, Sonnet은 그 사이의 균형점이에요.
+          </p>
+        </Section>
+      );
+    }
+
+    // 5. Claude Code 소개 배너
+    function ClaudeCodeSection() {
+      return (
+        <Section id="code" tone="black" className="py-24 sm:py-32">
+          <div className="reveal relative rounded-[2rem] overflow-hidden bg-gradient-to-br from-neutral-900 to-neutral-800 border border-white/10 px-8 sm:px-14 py-16 sm:py-20">
+            <div className="pointer-events-none absolute -top-24 -right-24 w-80 h-80 rounded-full blur-3xl bg-[#d97757]/25" />
+            <div className="pointer-events-none absolute -bottom-24 -left-24 w-80 h-80 rounded-full blur-3xl bg-[#6e59d9]/25" />
+
+            <div className="relative grid lg:grid-cols-2 gap-12 items-center">
+              <div>
+                <p className="text-sm font-semibold text-[#e0a58c] mb-3">Claude Code</p>
+                <h2 className="font-sf font-semibold tracking-tight text-3xl sm:text-4xl md:text-5xl leading-tight text-white">
+                  개발을 대신 해주는<br />에이전트형 코딩 도구
+                </h2>
+                <p className="mt-5 text-lg leading-relaxed text-neutral-300">
+                  터미널, IDE, 데스크톱, 웹 어디서든. 코드를 읽고 수정하고,
+                  테스트를 돌리고, 여러 파일에 걸친 작업을 스스로 수행합니다.
+                  "무엇을 할지"만 말하면 나머지를 함께 해내요.
+                </p>
+                <div className="mt-8 flex flex-wrap gap-3">
+                  {['터미널', 'IDE', '데스크톱', '웹'].map((t) => (
+                    <span key={t} className="text-sm px-4 py-2 rounded-full bg-white/10 text-white border border-white/10">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* 터미널 목업 */}
+              <div className="rounded-2xl bg-black/70 border border-white/10 shadow-2xl overflow-hidden font-mono text-[13px] leading-relaxed">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+                  <span className="w-3 h-3 rounded-full bg-[#ff5f57]"></span>
+                  <span className="w-3 h-3 rounded-full bg-[#febc2e]"></span>
+                  <span className="w-3 h-3 rounded-full bg-[#28c840]"></span>
+                  <span className="ml-2 text-xs text-neutral-500">claude — 프로젝트</span>
+                </div>
+                <div className="p-5 space-y-1.5">
+                  <p className="text-neutral-400"><span className="text-[#d97757]">$</span> claude "로그인 버그 고쳐줘"</p>
+                  <p className="text-neutral-500">· 관련 파일 4개 탐색 중…</p>
+                  <p className="text-[#63c7a5]">✓ auth.js 원인 파악</p>
+                  <p className="text-[#63c7a5]">✓ 수정 적용 &amp; 테스트 통과</p>
+                  <p className="text-neutral-300">완료했어요. 변경 사항을 확인해 보세요.</p>
+                  <p className="text-neutral-400"><span className="text-[#d97757]">$</span> <span className="animate-pulse">▋</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Section>
+      );
+    }
+
+    // 6. 안전·신뢰 (Anthropic 소개)
+    const SAFETY = [
+      { emoji: '🔬', title: 'AI 안전 연구 중심', desc: 'Anthropic은 AI를 안전하게 만드는 연구를 회사의 중심에 둡니다.' },
+      { emoji: '📜', title: 'Constitutional AI', desc: '명확한 원칙에 따라 행동하도록 학습해, 더 예측 가능하고 신뢰할 수 있게.' },
+      { emoji: '⚖️', title: '책임 있는 확장', desc: '능력이 커질수록 위험도 신중히 평가하며 단계적으로 배포합니다.' },
+    ];
+
+    function SafetySection() {
+      return (
+        <Section id="safety" tone="white" className="py-24 sm:py-32">
+          <SectionHeading
+            eyebrow="안전 · 신뢰"
+            title="안전을 먼저 생각하는 회사에서"
+            subtitle="클로드를 만든 Anthropic은 AI 안전 연구에 중점을 두는 회사입니다. 강력함만큼 신뢰가 중요하다고 믿어요."
+          />
+          <div className="mt-14 grid gap-6 md:grid-cols-3">
+            {SAFETY.map((s) => (
+              <Card key={s.title} className="reveal p-8">
+                <div className="text-4xl mb-4" aria-hidden="true">{s.emoji}</div>
+                <h3 className="font-sf font-semibold text-xl text-neutral-900 dark:text-white">{s.title}</h3>
+                <p className="mt-2 text-[15px] leading-relaxed text-neutral-500 dark:text-neutral-400">{s.desc}</p>
+              </Card>
+            ))}
+          </div>
+        </Section>
+      );
+    }
+
+    // 7. 마무리 CTA + 푸터
+    function Footer() {
+      return (
+        <>
+          <Section tone="gray" className="py-24 sm:py-32">
+            <div className="reveal text-center max-w-3xl mx-auto">
+              <ClaudeMark className="w-14 h-14 mx-auto mb-6" />
+              <h2 className="font-sf font-semibold tracking-tight text-3xl sm:text-5xl leading-tight text-neutral-900 dark:text-white">
+                자, 이제<br />무엇을 함께 해볼까요?
+              </h2>
+              <p className="mt-5 text-lg text-neutral-500 dark:text-neutral-400">
+                작은 궁금증이든, 큰 프로젝트든 — 편하게 말 걸어 주세요.
+              </p>
+            </div>
+          </Section>
+
+          <footer className="bg-applewhite dark:bg-black border-t border-black/5 dark:border-white/10 px-6 py-12">
+            <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <ClaudeMark className="w-6 h-6" />
+                <span className="font-sf font-semibold text-neutral-800 dark:text-neutral-200">Claude</span>
+                <span className="text-sm text-neutral-400">by Anthropic</span>
+              </div>
+              <p className="text-sm text-neutral-400 dark:text-neutral-600 text-center">
+                helpful · honest · harmless — 당신 곁의 AI.
+              </p>
+            </div>
+            <p className="mx-auto max-w-6xl mt-6 text-xs text-neutral-400 dark:text-neutral-600 text-center sm:text-left">
+              이 페이지는 클로드를 소개하기 위한 자기완결형 데모입니다.
+            </p>
+          </footer>
+        </>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      const [dark, setDark] = useDarkMode();
+      useReveal();
+      return (
+        <div className="font-sf antialiased">
+          <Navbar dark={dark} onToggleDark={() => setDark((d) => !d)} />
+          <main>
+            <Hero />
+            <AboutSection />
+            <SkillsSection />
+            <ModelsSection />
+            <ClaudeCodeSection />
+            <SafetySection />
+            <Footer />
+          </main>
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

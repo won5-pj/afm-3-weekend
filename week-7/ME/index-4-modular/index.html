@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>클로드(Claude) — Anthropic의 AI 어시스턴트 · 모듈 분리판</title>
+
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. 미고정 시 @babel/standalone 이
+       최신(8.x)으로 올라가 type="text/babel" 변환이 통째로 깨진다.
+       Babel 은 반드시 7.x 로 고정한다. React/ReactDOM 도 정확히 핀. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <!-- 테일윈드 커스텀 설정(브루탈리즘 팔레트/섀도우)은 별도 파일로 분리 -->
+  <script src="./tailwind.config.js"></script>
+  <!-- 마퀴/눌림/커서 등 CSS 애니메이션도 별도 파일로 분리 -->
+  <link rel="stylesheet" href="./styles.css">
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!--
+    ┌─────────────────────────────────────────────────────────────────────┐
+    │ 컴포넌트 파일 로딩 (의존성 순서대로)                                   │
+    │                                                                       │
+    │ • 각 파일은 type="text/babel" 로 불러오면 Babel 이 JSX 를 변환해       │
+    │   "일반 <script>" 로 실행한다 → 최상위 function 선언은 전역에 등록되어  │
+    │   다른 파일에서도 참조 가능하다. (모듈/번들러 불필요)                   │
+    │ • React 훅 구조분해(useState 등)는 재선언 충돌을 피하려 setup.jsx 에서  │
+    │   딱 한 번만 한다. 이후 모든 컴포넌트가 그 전역 바인딩을 공유한다.      │
+    │ • main.jsx 가 마지막에 실행되며 <App/> 을 렌더한다.                     │
+    │                                                                       │
+    │ ⚠️ 외부 .jsx 를 fetch 하므로 file:// 더블클릭으로는 열리지 않는다.      │
+    │    반드시 로컬 서버로 열 것 (README.md 참고).                          │
+    └─────────────────────────────────────────────────────────────────────┘
+  -->
+
+  <!-- 0) 공통 setup: React 훅 구조분해 (한 번만) -->
+  <script type="text/babel" src="./components/setup.jsx"></script>
+
+  <!-- 1) 디자인 시스템 프리미티브 -->
+  <script type="text/babel" src="./components/Box.jsx"></script>
+  <script type="text/babel" src="./components/Button.jsx"></script>
+  <script type="text/babel" src="./components/Badge.jsx"></script>
+  <script type="text/babel" src="./components/SectionTitle.jsx"></script>
+
+  <!-- 2) 공통 / 레이아웃 -->
+  <script type="text/babel" src="./components/Header.jsx"></script>
+  <script type="text/babel" src="./components/Marquee.jsx"></script>
+
+  <!-- 3) 섹션들 -->
+  <script type="text/babel" src="./components/Hero.jsx"></script>
+  <script type="text/babel" src="./components/CanDo.jsx"></script>
+  <script type="text/babel" src="./components/Models.jsx"></script>
+  <script type="text/babel" src="./components/Where.jsx"></script>
+  <script type="text/babel" src="./components/Values.jsx"></script>
+  <script type="text/babel" src="./components/CTA.jsx"></script>
+  <script type="text/babel" src="./components/Footer.jsx"></script>
+
+  <!-- 4) 루트 컴포넌트 & 렌더 -->
+  <script type="text/babel" src="./components/App.jsx"></script>
+  <script type="text/babel" src="./main.jsx"></script>
+</body>
+</html>

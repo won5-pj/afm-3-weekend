@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>멍스데이 · 강아지 수제 생일 케이크 포스터</title>
+
+  <!-- ⚠️ 모든 CDN 버전 고정. 미고정 시 @babel/standalone 8.x 로 올라가 text/babel 인라인 변환이 깨진다. Babel 은 7.x 고정. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    /* 파스텔 반려카페 배경 + 인쇄용 기본값 */
+    :root {
+      --cream: #FFF9F2;
+      --mint: #DFF3EC;
+      --peach: #FFE3D8;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(1200px 600px at 15% -5%, #FFEFE6 0%, rgba(255,239,230,0) 60%),
+        radial-gradient(1000px 700px at 100% 10%, #E4F5EE 0%, rgba(228,245,238,0) 55%),
+        linear-gradient(180deg, #FFFDFA 0%, #FBF6FF 100%);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Tailwind 로 표현하기 어려운 커스텀 애니메이션만 여기서 정의 */
+    @keyframes floaty {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-10px); }
+    }
+    @keyframes flicker {
+      0%, 100% { transform: scaleY(1)   translateY(0);   opacity: 1; }
+      50%      { transform: scaleY(1.12) translateY(-1px); opacity: .9; }
+    }
+    @keyframes twinkle {
+      0%, 100% { opacity: .25; transform: scale(.8); }
+      50%      { opacity: 1;   transform: scale(1.15); }
+    }
+    .anim-floaty  { animation: floaty 6s ease-in-out infinite; }
+    .anim-flicker { transform-box: fill-box; transform-origin: center bottom; animation: flicker 1.6s ease-in-out infinite; }
+    .anim-twinkle { animation: twinkle 3s ease-in-out infinite; }
+
+    /* 인쇄 시 배경색·그림자 유지 + 여백 정리 */
+    @media print {
+      body { background: #FFFDFA !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .no-print { display: none !important; }
+      .poster-card { box-shadow: none !important; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .anim-floaty, .anim-flicker, .anim-twinkle { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState } = React;
+
+    // ========================================
+    // 🎨 Design System — 순수 프레젠테이션 컴포넌트
+    // ========================================
+
+    // 파스텔 배지 (상단 컨셉 태그용)
+    function Badge({ children, className = "" }) {
+      return (
+        <span className={
+          "inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold tracking-wide " +
+          "bg-white/70 text-rose-400 ring-1 ring-rose-100 backdrop-blur " + className
+        }>
+          {children}
+        </span>
+      );
+    }
+
+    // 가격 칩
+    function PriceChip({ label, price, sub, tone = "peach" }) {
+      const tones = {
+        peach: "bg-[#FFE3D8] text-[#C0603F] ring-[#FFD2C1]",
+        mint:  "bg-[#DFF3EC] text-[#2F8C74] ring-[#C6EADD]",
+      };
+      return (
+        <div className={"rounded-2xl px-5 py-3 ring-1 " + tones[tone]}>
+          <div className="text-[11px] font-semibold uppercase tracking-widest opacity-70">{label}</div>
+          <div className="text-2xl font-extrabold leading-tight">{price}</div>
+          {sub && <div className="text-[11px] font-medium opacity-70">{sub}</div>}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 일러스트 — 강아지 수제 생일 케이크 (인라인 SVG, 자체 포함)
+    // ========================================
+    function BirthdayCakeIllustration() {
+      return (
+        <svg
+          viewBox="0 0 400 400"
+          role="img"
+          aria-label="촛불과 강아지 발자국이 올라간 강아지 수제 생일 케이크 일러스트"
+          className="w-full h-full drop-shadow-[0_18px_30px_rgba(214,150,120,0.35)]"
+        >
+          <defs>
+            <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#FFFFFF" />
+              <stop offset="1" stopColor="#F3E9FF" />
+            </linearGradient>
+            <linearGradient id="cakeBody" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#FFF3E9" />
+              <stop offset="1" stopColor="#FFE1CE" />
+            </linearGradient>
+            <linearGradient id="cakeTop" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#FFFDFB" />
+              <stop offset="1" stopColor="#FFF0E4" />
+            </linearGradient>
+            <linearGradient id="cream" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#FFFFFF" />
+              <stop offset="1" stopColor="#FFEAF1" />
+            </linearGradient>
+            <linearGradient id="mintBand" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#E7F7F1" />
+              <stop offset="1" stopColor="#CFEEE2" />
+            </linearGradient>
+            <radialGradient id="flameG" cx="0.5" cy="0.35" r="0.7">
+              <stop offset="0" stopColor="#FFF6C8" />
+              <stop offset="0.5" stopColor="#FFC24B" />
+              <stop offset="1" stopColor="#FF8A3D" />
+            </radialGradient>
+            <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" />
+            </filter>
+          </defs>
+
+          {/* 배경 광선 / 반짝이 */}
+          <g className="anim-twinkle" style={{ transformOrigin: "70px 70px" }}>
+            <path d="M70 48 l6 16 16 6 -16 6 -6 16 -6 -16 -16 -6 16 -6 z" fill="#FFD3A6" opacity="0.8"/>
+          </g>
+          <g className="anim-twinkle" style={{ transformOrigin: "330px 120px", animationDelay: "1s" }}>
+            <path d="M330 104 l4 11 11 4 -11 4 -4 11 -4 -11 -11 -4 11 -4 z" fill="#9FE0C8" opacity="0.85"/>
+          </g>
+          <g className="anim-twinkle" style={{ transformOrigin: "300px 40px", animationDelay: "2s" }}>
+            <circle cx="300" cy="40" r="5" fill="#FFB6C1" opacity="0.8"/>
+          </g>
+          <g className="anim-twinkle" style={{ transformOrigin: "48px 150px", animationDelay: "0.6s" }}>
+            <circle cx="48" cy="150" r="4" fill="#BFE3FF" opacity="0.85"/>
+          </g>
+
+          {/* 접시 그림자 + 접시 */}
+          <ellipse cx="200" cy="356" rx="150" ry="26" fill="#E9D9F2" opacity="0.55" filter="url(#soft)" />
+          <ellipse cx="200" cy="346" rx="146" ry="30" fill="url(#plate)" stroke="#EFE2FB" strokeWidth="2" />
+          <ellipse cx="200" cy="340" rx="120" ry="22" fill="#FFFFFF" opacity="0.7" />
+
+          {/* ===== 케이크 본체 (2단) ===== */}
+          {/* 아래 단 */}
+          <g>
+            <rect x="92" y="238" width="216" height="86" rx="26" fill="url(#cakeBody)" />
+            {/* 민트 리본 밴드 */}
+            <rect x="92" y="286" width="216" height="20" fill="url(#mintBand)" opacity="0.9" />
+            {/* 아래단 크림 드립 */}
+            <path d="M92 258
+                     q14 26 30 2 q16 28 34 4 q17 30 36 3 q17 30 36 4 q16 26 30 0 q10 18 20 6
+                     l0 -34 l-186 0 z"
+                  fill="url(#cream)" />
+            {/* 도트 장식 */}
+            <g fill="#FFB7C7" opacity="0.9">
+              <circle cx="128" cy="298" r="3.5"/><circle cx="164" cy="296" r="3.5"/>
+              <circle cx="200" cy="298" r="3.5"/><circle cx="236" cy="296" r="3.5"/>
+              <circle cx="272" cy="298" r="3.5"/>
+            </g>
+          </g>
+
+          {/* 위 단 */}
+          <g>
+            <rect x="126" y="176" width="148" height="74" rx="24" fill="url(#cakeTop)" />
+            {/* 위단 크림 드립 */}
+            <path d="M126 196
+                     q13 24 27 1 q15 26 30 2 q15 26 30 2 q14 24 27 0 q10 16 18 5
+                     l0 -30 l-159 0 z"
+                  fill="url(#cream)" />
+            {/* 하트 스프링클 */}
+            <g fill="#FF9FB4">
+              <path d="M150 214 c-4-6-12-3-12 3 c0 5 12 11 12 11 c0 0 12-6 12-11 c0-6-8-9-12-3z" transform="scale(0.5) translate(150 214)"/>
+            </g>
+            <g fill="#FFC48A" opacity="0.95">
+              <circle cx="164" cy="220" r="3"/><circle cx="210" cy="224" r="3"/><circle cx="238" cy="218" r="3"/>
+            </g>
+            <g fill="#8FD9BE">
+              <circle cx="188" cy="230" r="3"/><circle cx="224" cy="232" r="3"/>
+            </g>
+          </g>
+
+          {/* ===== 강아지 발자국 토퍼 (케이크 윗면) ===== */}
+          <g transform="translate(200 168)">
+            <g transform="translate(-22 -4) scale(0.9)" fill="#C0603F">
+              <ellipse cx="0" cy="6" rx="9" ry="7"/>
+              <ellipse cx="-9" cy="-6" rx="3.4" ry="4.4"/>
+              <ellipse cx="-2.5" cy="-9" rx="3.4" ry="4.4"/>
+              <ellipse cx="4.5" cy="-9" rx="3.4" ry="4.4"/>
+              <ellipse cx="10.5" cy="-5" rx="3.4" ry="4.4"/>
+            </g>
+          </g>
+
+          {/* ===== 촛불 (3개) ===== */}
+          {[152, 200, 248].map((cx, i) => (
+            <g key={cx}>
+              {/* 초 기둥 */}
+              <rect x={cx - 6} y="120" width="12" height="52" rx="5"
+                    fill={i === 1 ? "#FF9EB6" : (i === 0 ? "#8FD9BE" : "#FFC98A")} />
+              <rect x={cx - 6} y="120" width="12" height="52" rx="5" fill="#FFFFFF" opacity="0.18" />
+              {/* 사선 스트라이프 */}
+              <path d={`M${cx-6} 138 l12 -8 M${cx-6} 150 l12 -8 M${cx-6} 162 l12 -8`}
+                    stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" opacity="0.65" />
+              {/* 심지 */}
+              <rect x={cx - 1} y="112" width="2" height="8" rx="1" fill="#8A6A55" />
+              {/* 불꽃 */}
+              <g className="anim-flicker" style={{ animationDelay: `${i * 0.25}s` }}>
+                <ellipse cx={cx} cy="104" rx="6.5" ry="11" fill="url(#flameG)" />
+                <ellipse cx={cx} cy="102" rx="2.6" ry="5.2" fill="#FFF7D6" opacity="0.95" />
+              </g>
+              {/* 불꽃 광채 */}
+              <circle cx={cx} cy="103" r="15" fill="#FFDE9B" opacity="0.20" />
+            </g>
+          ))}
+
+          {/* ===== 케이크 위 강아지 얼굴 토퍼 (뒤에서 빼꼼) ===== */}
+          <g className="anim-floaty" transform="translate(300 150)" style={{ transformOrigin: "300px 150px" }}>
+            {/* 막대 */}
+            <rect x="-2" y="8" width="4" height="70" rx="2" fill="#E8CFA8" />
+            {/* 얼굴 원판 */}
+            <circle cx="0" cy="0" r="30" fill="#FFFFFF" stroke="#FFE0B8" strokeWidth="3" />
+            {/* 귀 */}
+            <ellipse cx="-24" cy="-8" rx="9" ry="15" fill="#C99A6A" transform="rotate(-20 -24 -8)"/>
+            <ellipse cx="24" cy="-8" rx="9" ry="15" fill="#C99A6A" transform="rotate(20 24 -8)"/>
+            {/* 얼굴 톤 */}
+            <circle cx="0" cy="0" r="22" fill="#F6D9B4" />
+            {/* 눈 */}
+            <circle cx="-8" cy="-3" r="3" fill="#4A3627" />
+            <circle cx="8" cy="-3" r="3" fill="#4A3627" />
+            <circle cx="-7" cy="-4" r="1" fill="#fff" />
+            <circle cx="9" cy="-4" r="1" fill="#fff" />
+            {/* 볼터치 */}
+            <circle cx="-13" cy="4" r="4" fill="#FFB6C1" opacity="0.7"/>
+            <circle cx="13" cy="4" r="4" fill="#FFB6C1" opacity="0.7"/>
+            {/* 코 + 입 */}
+            <ellipse cx="0" cy="5" rx="3.2" ry="2.4" fill="#4A3627" />
+            <path d="M0 7 q-4 6 -8 3 M0 7 q4 6 8 3" stroke="#4A3627" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+            {/* 고깔모자 */}
+            <path d="M-14 -20 L0 -52 L14 -20 Z" fill="#FF9EB6" />
+            <path d="M-14 -20 L0 -52 L14 -20 Z" fill="#FFFFFF" opacity="0.15" />
+            <circle cx="0" cy="-52" r="4" fill="#FFD86B" />
+            <g fill="#FFFFFF" opacity="0.85">
+              <circle cx="-6" cy="-28" r="2"/><circle cx="5" cy="-33" r="2"/><circle cx="-2" cy="-40" r="1.6"/>
+            </g>
+          </g>
+
+          {/* 흩날리는 색종이(컨페티) */}
+          <g opacity="0.9">
+            <rect x="72"  y="196" width="8" height="8" rx="2" fill="#FFC0CB" transform="rotate(20 76 200)"/>
+            <rect x="326" y="230" width="8" height="8" rx="2" fill="#9FE0C8" transform="rotate(-15 330 234)"/>
+            <rect x="60"  y="270" width="7" height="7" rx="2" fill="#FFD86B" transform="rotate(35 63 273)"/>
+            <rect x="336" y="286" width="7" height="7" rx="2" fill="#BFD9FF" transform="rotate(-25 339 289)"/>
+            <circle cx="100" cy="150" r="4" fill="#FFB6C1"/>
+            <circle cx="308" cy="196" r="4" fill="#FFD86B"/>
+          </g>
+        </svg>
+      );
+    }
+
+    // ========================================
+    // 📄 Poster — 메인 포스터 (세로형, 중앙 정렬)
+    // ========================================
+    function Poster() {
+      return (
+        <div className="poster-card relative w-full max-w-[430px] overflow-hidden rounded-[36px] bg-white/80 ring-1 ring-white/70 shadow-[0_40px_80px_-24px_rgba(180,140,120,0.45)] backdrop-blur">
+          {/* 상단 파스텔 헤더 */}
+          <div className="relative bg-gradient-to-b from-[#FFF3EC] via-[#FFF9F4] to-transparent px-7 pt-8 pb-2 text-center">
+            <div className="flex justify-center">
+              <Badge>🐾 청라 · 강아지 생일파티 성지</Badge>
+            </div>
+
+            {/* 로고 / 카페명 */}
+            <h1 className="mt-4 text-4xl font-black tracking-tight text-[#5B4636]">
+              멍스데이 <span className="align-middle">🐶</span>
+            </h1>
+            <p className="mt-1 text-sm font-semibold tracking-[0.25em] text-rose-300">MONGSDAY</p>
+
+            {/* 슬로건 */}
+            <p className="mt-3 text-[15px] font-bold text-[#7A6552]">
+              “오늘은 우리 강아지가 주인공”
+            </p>
+            <p className="mt-1 text-xs font-medium text-[#A8967F]">
+              청결한 대형 반려동물 브런치 카페
+            </p>
+          </div>
+
+          {/* 중앙 대형 일러스트 */}
+          <div className="relative px-6">
+            <div className="mx-auto aspect-square w-full max-w-[360px] anim-floaty">
+              <BirthdayCakeIllustration />
+            </div>
+            {/* SIGNATURE 리본 */}
+            <div className="pointer-events-none absolute right-5 top-2 rotate-6">
+              <span className="rounded-full bg-[#FF9EB6] px-3 py-1 text-[11px] font-black tracking-wider text-white shadow-md">
+                SIGNATURE
+              </span>
+            </div>
+          </div>
+
+          {/* 하단 메뉴 정보 */}
+          <div className="px-7 pb-8 pt-2 text-center">
+            <div className="mx-auto mb-4 h-px w-24 bg-gradient-to-r from-transparent via-[#EAD8C8] to-transparent" />
+
+            <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#C0A88F]">Signature Menu</div>
+            <h2 className="mt-1 text-[26px] font-black leading-tight text-[#5B4636]">
+              🎂 강아지 수제 생일 케이크
+            </h2>
+            <p className="text-sm font-semibold tracking-wide text-rose-300">Doggy Birthday Cake</p>
+
+            <p className="mx-auto mt-3 max-w-[320px] text-[13px] leading-relaxed text-[#7A6552]">
+              우리 아이를 위한 <b className="text-[#C0603F]">100% 수제</b> · 강아지가 먹어도
+              안심되는 재료만 사용해요. 생일파티 예약 시 <b className="text-[#2F8C74]">포토존 &amp; 파티데코 패키지</b>를 함께 드려요.
+            </p>
+
+            {/* 재료/안심 태그 */}
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {["무염·무설탕", "강아지 전용 재료", "당일 수제", "예약제"].map((t) => (
+                <span key={t} className="rounded-full bg-[#FFF3EC] px-3 py-1 text-[11px] font-semibold text-[#B07B57] ring-1 ring-[#F3E0D2]">
+                  {t}
+                </span>
+              ))}
+            </div>
+
+            {/* 가격 */}
+            <div className="mt-5 flex items-stretch justify-center gap-3">
+              <PriceChip label="Cake" price="₩29,000" sub="1호 · 수제 케이크" tone="peach" />
+              <PriceChip label="Party Set" price="₩49,000~" sub="파티 데코 패키지" tone="mint" />
+            </div>
+
+            <p className="mt-4 text-[11px] font-medium text-[#B9A793]">
+              ※ 이미지·가격은 예시이며 실제와 다를 수 있어요 · 파티 예약 문의 환영 🐾
+            </p>
+          </div>
+
+          {/* 하단 발자국 푸터 라인 */}
+          <div className="flex items-center justify-center gap-2 bg-[#FBF3EA] py-3 text-sm">
+            <span>🐾</span>
+            <span className="text-[12px] font-bold tracking-widest text-[#B07B57]">MONGSDAY CAFE · CHEONGNA</span>
+            <span>🐾</span>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      return (
+        <div className="min-h-screen w-full flex flex-col items-center justify-center px-4 py-10">
+          <Poster />
+
+          {/* 인쇄 버튼 (화면 전용, 인쇄 시 숨김) */}
+          <button
+            onClick={() => window.print()}
+            className="no-print mt-6 rounded-full bg-[#5B4636] px-6 py-2.5 text-sm font-bold text-white shadow-lg transition hover:bg-[#6d543f] active:scale-95"
+          >
+            🖨️ 포스터 인쇄 / PDF 저장
+          </button>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

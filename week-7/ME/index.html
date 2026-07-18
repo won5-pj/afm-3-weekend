@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>안녕하세요, 저는 클로드예요 👋</title>
+
+  <!-- ⚠️ 모든 CDN 버전 고정. 미고정 시 @babel/standalone 이 8.x 로 올라가 인라인 JSX 변환이 깨진다.
+       Babel 은 반드시 7.x. React/ReactDOM/Tailwind 도 정확히 핀. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script>
+    // Tailwind 설정: 다크모드(class) + Anthropic 무드 커스텀 컬러
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            cream: {
+              50:  '#fdfbf7',
+              100: '#faf6ee',
+              200: '#f4ecdd',
+            },
+            clay: {
+              50:  '#fdf3ee',
+              100: '#fbe4d8',
+              200: '#f6c9b2',
+              300: '#ee9f7e',
+              400: '#e17a52',
+              500: '#d97757', // Anthropic 코랄/테라코타 포인트
+              600: '#c15f3f',
+              700: '#9e4a30',
+            },
+            ink: {
+              700: '#3a352f',
+              800: '#2a2622',
+              900: '#1c1916',
+            },
+          },
+          fontFamily: {
+            sans: ['"Pretendard"', 'system-ui', '-apple-system', '"Apple SD Gothic Neo"', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <style>
+    /* Tailwind 유틸로 표현하기 어려운 부분만 커스텀 CSS 로 처리 */
+    html { scroll-behavior: smooth; }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes floaty {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50%      { transform: translateY(-10px) rotate(3deg); }
+    }
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 0.85; }
+    }
+
+    .animate-fade-up { animation: fadeInUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .animate-floaty  { animation: floaty 6s ease-in-out infinite; }
+    .animate-glow    { animation: pulseGlow 5s ease-in-out infinite; }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .animate-fade-up, .animate-floaty, .animate-glow { animation: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks 추출
+    // ========================================
+    const { useState, useEffect, useCallback } = React;
+
+    // ========================================
+    // 🎨 Design System Components (순수 프레젠테이션)
+    // ========================================
+
+    // 화면에 들어올 때 부드럽게 나타나는 래퍼
+    function Reveal({ children, delay = 0, className = "" }) {
+      const [shown, setShown] = useState(false);
+      const ref = React.useRef(null);
+
+      useEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        const io = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((e) => {
+              if (e.isIntersecting) {
+                setShown(true);
+                io.unobserve(e.target);
+              }
+            });
+          },
+          { threshold: 0.15 }
+        );
+        io.observe(el);
+        return () => io.disconnect();
+      }, []);
+
+      return (
+        <div
+          ref={ref}
+          style={{ animationDelay: `${delay}ms` }}
+          className={`${shown ? "animate-fade-up" : "opacity-0"} ${className}`}
+        >
+          {children}
+        </div>
+      );
+    }
+
+    // 섹션 상단의 작은 라벨
+    function SectionLabel({ children }) {
+      return (
+        <span className="inline-block text-xs font-semibold tracking-widest uppercase text-clay-500 dark:text-clay-300 mb-3">
+          {children}
+        </span>
+      );
+    }
+
+    // 재사용 카드
+    function Card({ children, className = "" }) {
+      return (
+        <div
+          className={
+            "rounded-3xl bg-white/80 dark:bg-ink-800/70 backdrop-blur " +
+            "border border-cream-200 dark:border-ink-700 " +
+            "shadow-sm hover:shadow-xl hover:-translate-y-1 " +
+            "transition-all duration-300 " + className
+          }
+        >
+          {children}
+        </div>
+      );
+    }
+
+    // 배지/칩
+    function Chip({ children, tone = "clay", className = "" }) {
+      const tones = {
+        clay: "bg-clay-100 text-clay-700 dark:bg-clay-500/15 dark:text-clay-200 border-clay-200 dark:border-clay-500/30",
+        neutral: "bg-cream-100 text-ink-700 dark:bg-ink-700 dark:text-cream-100 border-cream-200 dark:border-ink-700",
+      };
+      return (
+        <span className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium ${tones[tone]} ${className}`}>
+          {children}
+        </span>
+      );
+    }
+
+    // 다크모드 토글 버튼
+    function ThemeToggle({ dark, onToggle }) {
+      return (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={dark ? "라이트 모드로 전환" : "다크 모드로 전환"}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full
+                     border border-cream-200 dark:border-ink-700
+                     bg-white/70 dark:bg-ink-800/70 backdrop-blur
+                     text-xl hover:scale-110 active:scale-95 transition-transform duration-200
+                     shadow-sm"
+        >
+          {dark ? "🌞" : "🌙"}
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🧩 Layout Components
+    // ========================================
+    function Header({ dark, onToggle }) {
+      return (
+        <header className="fixed top-0 inset-x-0 z-30">
+          <div className="max-w-5xl mx-auto px-5 sm:px-8 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-clay-500 text-white text-lg shadow-md">
+                ✳️
+              </span>
+              <span className="font-bold text-ink-800 dark:text-cream-100 tracking-tight">Claude</span>
+            </div>
+            <ThemeToggle dark={dark} onToggle={onToggle} />
+          </div>
+        </header>
+      );
+    }
+
+    // ========================================
+    // 📄 Section Components
+    // ========================================
+
+    // 히어로
+    function Hero() {
+      return (
+        <section className="relative overflow-hidden pt-32 pb-20 sm:pt-40 sm:pb-28">
+          {/* 은은한 배경 오브 */}
+          <div className="pointer-events-none absolute -top-24 -right-16 h-80 w-80 rounded-full bg-clay-200/50 dark:bg-clay-500/10 blur-3xl animate-glow" />
+          <div className="pointer-events-none absolute top-40 -left-24 h-72 w-72 rounded-full bg-clay-100/60 dark:bg-clay-400/5 blur-3xl animate-glow" />
+
+          <div className="relative max-w-5xl mx-auto px-5 sm:px-8 text-center">
+            <Reveal>
+              <div className="mx-auto mb-8 flex h-24 w-24 items-center justify-center rounded-[2rem] bg-white dark:bg-ink-800 shadow-lg text-5xl animate-floaty">
+                👋
+              </div>
+            </Reveal>
+
+            <Reveal delay={80}>
+              <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-ink-900 dark:text-cream-50 leading-tight">
+                안녕하세요,<br className="sm:hidden" /> 저는 <span className="text-clay-500">클로드</span>예요
+              </h1>
+            </Reveal>
+
+            <Reveal delay={160}>
+              <p className="mx-auto mt-6 max-w-2xl text-lg sm:text-xl text-ink-700/80 dark:text-cream-100/70 leading-relaxed">
+                Anthropic이 만든 AI 어시스턴트예요. 대화하고, 글을 쓰고, 코드를 짜고,
+                <br className="hidden sm:block" />
+                여러분의 생각을 함께 정리하는 <span className="font-semibold text-clay-600 dark:text-clay-300">파트너</span>랍니다.
+              </p>
+            </Reveal>
+
+            <Reveal delay={240}>
+              <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+                <a
+                  href="#skills"
+                  className="rounded-full bg-clay-500 hover:bg-clay-600 text-white font-semibold px-7 py-3.5
+                             shadow-lg shadow-clay-500/25 hover:shadow-xl hover:-translate-y-0.5
+                             active:translate-y-0 transition-all duration-200"
+                >
+                  제가 뭘 하는지 볼래요 →
+                </a>
+                <a
+                  href="#personality"
+                  className="rounded-full border border-cream-200 dark:border-ink-700
+                             bg-white/70 dark:bg-ink-800/70 backdrop-blur
+                             text-ink-800 dark:text-cream-100 font-semibold px-7 py-3.5
+                             hover:-translate-y-0.5 transition-all duration-200"
+                >
+                  어떤 성격이냐면요
+                </a>
+              </div>
+            </Reveal>
+          </div>
+        </section>
+      );
+    }
+
+    // "저는 이런 걸 해요"
+    const SKILLS = [
+      { emoji: "💬", title: "대화 & 질문답변", desc: "궁금한 걸 물어보면 쉽게 풀어서 설명해요." },
+      { emoji: "✍️", title: "글쓰기", desc: "이메일, 에세이, 요약, 번역까지 도와요." },
+      { emoji: "💻", title: "코딩", desc: "코드 작성·디버깅·리뷰. Claude Code로 실제 개발도 도와요." },
+      { emoji: "🧠", title: "생각 정리", desc: "아이디어 브레인스토밍과 의사결정을 함께 고민해요." },
+      { emoji: "📄", title: "문서 이해", desc: "긴 문서를 읽고 핵심을 쏙 뽑아줘요." },
+      { emoji: "🎨", title: "창작", desc: "스토리, 아이디어, 창의적인 작업까지 함께해요." },
+    ];
+
+    function SkillsSection() {
+      return (
+        <section id="skills" className="py-20 sm:py-28 scroll-mt-20">
+          <div className="max-w-5xl mx-auto px-5 sm:px-8">
+            <Reveal className="text-center mb-14">
+              <SectionLabel>What I do</SectionLabel>
+              <h2 className="text-3xl sm:text-4xl font-bold text-ink-900 dark:text-cream-50 tracking-tight">
+                저는 이런 걸 해요
+              </h2>
+            </Reveal>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
+              {SKILLS.map((s, i) => (
+                <Reveal key={s.title} delay={i * 70}>
+                  <Card className="group h-full p-7">
+                    <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-clay-50 dark:bg-clay-500/15 text-3xl group-hover:scale-110 transition-transform duration-300">
+                      {s.emoji}
+                    </div>
+                    <h3 className="text-lg font-bold text-ink-800 dark:text-cream-50 mb-2">
+                      {s.title}
+                    </h3>
+                    <p className="text-ink-700/75 dark:text-cream-100/65 leading-relaxed">
+                      {s.desc}
+                    </p>
+                  </Card>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    // "저는 이런 성격이에요"
+    const TRAITS = [
+      { emoji: "🫶", title: "정직해요", desc: "모르면 모른다고 솔직하게 말해요." },
+      { emoji: "🌱", title: "사려 깊어요", desc: "안전하고 도움되는 답을 늘 고민해요." },
+      { emoji: "🔍", title: "호기심 많아요", desc: "함께 배우고 알아가는 걸 좋아해요." },
+    ];
+
+    function PersonalitySection() {
+      return (
+        <section id="personality" className="py-20 sm:py-28 scroll-mt-20">
+          <div className="max-w-5xl mx-auto px-5 sm:px-8">
+            <div className="rounded-[2.5rem] bg-gradient-to-br from-clay-50 to-cream-100 dark:from-ink-800 dark:to-ink-900 border border-cream-200 dark:border-ink-700 px-6 sm:px-12 py-14 sm:py-16">
+              <Reveal className="text-center mb-12">
+                <SectionLabel>Who I am</SectionLabel>
+                <h2 className="text-3xl sm:text-4xl font-bold text-ink-900 dark:text-cream-50 tracking-tight">
+                  저는 이런 성격이에요
+                </h2>
+              </Reveal>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                {TRAITS.map((t, i) => (
+                  <Reveal key={t.title} delay={i * 90}>
+                    <div className="text-center px-4">
+                      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-white dark:bg-ink-800 shadow-md text-3xl">
+                        {t.emoji}
+                      </div>
+                      <h3 className="text-xl font-bold text-ink-800 dark:text-cream-50 mb-2">
+                        {t.title}
+                      </h3>
+                      <p className="text-ink-700/75 dark:text-cream-100/65 leading-relaxed">
+                        {t.desc}
+                      </p>
+                    </div>
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    // Claude 모델 패밀리
+    const MODELS = [
+      { name: "Fable 5", tag: "Claude 5 · 최신", desc: "새롭게 합류한 최신 라인업" },
+      { name: "Sonnet 5", tag: "Claude 5 · 최신", desc: "속도와 성능의 균형" },
+      { name: "Opus 4.8", tag: "가장 강력", desc: "가장 강력한 추론 능력" },
+      { name: "Haiku 4.5", tag: "가볍게", desc: "빠르고 가벼운 응답" },
+    ];
+
+    function ModelFamilySection() {
+      return (
+        <section id="models" className="py-20 sm:py-28 scroll-mt-20">
+          <div className="max-w-5xl mx-auto px-5 sm:px-8">
+            <Reveal className="text-center mb-12">
+              <SectionLabel>Model family</SectionLabel>
+              <h2 className="text-3xl sm:text-4xl font-bold text-ink-900 dark:text-cream-50 tracking-tight">
+                다양한 모습으로 만나요
+              </h2>
+              <p className="mt-4 text-ink-700/75 dark:text-cream-100/65">
+                필요에 맞춰 골라 쓸 수 있는 클로드 모델 패밀리예요.
+              </p>
+            </Reveal>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              {MODELS.map((m, i) => (
+                <Reveal key={m.name} delay={i * 70}>
+                  <Card className="flex items-center gap-4 p-6">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-clay-500 text-white font-bold text-lg shadow">
+                      {m.name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <span className="font-bold text-ink-800 dark:text-cream-50">{m.name}</span>
+                        <Chip tone="clay" className="!px-3 !py-0.5 !text-xs">{m.tag}</Chip>
+                      </div>
+                      <p className="text-sm text-ink-700/70 dark:text-cream-100/60">{m.desc}</p>
+                    </div>
+                  </Card>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    // 푸터
+    function Footer() {
+      return (
+        <footer className="pb-16 pt-10">
+          <div className="max-w-5xl mx-auto px-5 sm:px-8 text-center">
+            <Reveal>
+              <p className="text-lg font-semibold text-ink-800 dark:text-cream-50">
+                Made with 🤍 by Anthropic
+              </p>
+              <p className="mt-3 text-ink-700/70 dark:text-cream-100/60">
+                이 페이지도 제가 직접 그렸어요 :) &nbsp;— Claude Code로 만들었답니다.
+              </p>
+              <div className="mt-6 flex justify-center">
+                <Chip tone="neutral">✳️ 함께 이야기 나눠요</Chip>
+              </div>
+            </Reveal>
+          </div>
+        </footer>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      const [dark, setDark] = useState(false);
+
+      // 시스템 선호 기반 초기 테마
+      useEffect(() => {
+        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        setDark(prefersDark);
+      }, []);
+
+      // dark 상태를 <html> class 에 반영
+      useEffect(() => {
+        document.documentElement.classList.toggle("dark", dark);
+      }, [dark]);
+
+      const toggle = useCallback(() => setDark((d) => !d), []);
+
+      return (
+        <div className="min-h-screen bg-cream-50 dark:bg-ink-900 text-ink-800 dark:text-cream-100 selection:bg-clay-200 selection:text-ink-900 transition-colors duration-500">
+          <Header dark={dark} onToggle={toggle} />
+          <main>
+            <Hero />
+            <SkillsSection />
+            <PersonalitySection />
+            <ModelFamilySection />
+          </main>
+          <Footer />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Rendering
+    // ========================================
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

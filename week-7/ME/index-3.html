@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude — Anthropic의 AI 어시스턴트</title>
+
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. 미고정 시 @babel/standalone 이
+       최신(8.x)으로 올라가 type="text/babel" 인라인 변환이 통째로 깨진다.
+       Babel 은 반드시 7.x 로 고정한다 (8.x 미지원). React/ReactDOM 도 정확히 핀. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <!-- 디터 람스 팔레트: 오프화이트 배경, 차분한 회색 잉크, 절제된 단일 액센트(뮤트 테라코타). -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            paper:    '#f4f4f2',  // 오프화이트 배경
+            ink:      '#1c1c1a',  // 제목용 딥 그레이
+            graphite: '#4a4a46',  // 본문용 중간 회색
+            muted:    '#8a8a84',  // 라벨·캡션용 옅은 회색
+            hairline: '#e0e0db',  // 1px 헤어라인 구분선
+            accent:   '#d4753a',  // 람스식 절제된 액센트 (소량만)
+          },
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto',
+                   'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    /* Tailwind로 표현하기 어려운 것만 최소한으로 — 은은한 fade-in (람스 정신: 과하지 않게) */
+    html { scroll-behavior: smooth; }
+    body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+                  transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .reveal.is-visible {
+      opacity: 1;
+      transform: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity: 1; transform: none; transition: none; }
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body class="bg-paper text-graphite font-sans antialiased">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // ========================================
+    // React Hooks
+    // ========================================
+    const { useState, useEffect, useRef } = React;
+
+    // ========================================
+    // 🎨 Design System — 순수 프레젠테이션 컴포넌트 (비즈니스 로직 없음)
+    // ========================================
+
+    // 얇은 1px 헤어라인 구분선 (Braun/Vitsœ 느낌의 기능적 그리드)
+    function Hairline({ className = '' }) {
+      return <hr className={`border-0 border-t border-hairline ${className}`} />;
+    }
+
+    // 섹션 상단의 절제된 라벨: "01 — 핵심 가치" 형태 (람스의 01–10 넘버링 오마주)
+    function SectionLabel({ index, children }) {
+      return (
+        <div className="flex items-baseline gap-3 mb-8">
+          <span className="text-xs font-medium tracking-[0.25em] text-accent tabular-nums">
+            {index}
+          </span>
+          <span className="text-xs font-medium tracking-[0.25em] uppercase text-muted">
+            {children}
+          </span>
+        </div>
+      );
+    }
+
+    // 스크롤 진입 시 은은하게 나타나는 래퍼 (IntersectionObserver, 애니메이션 최소화)
+    function Reveal({ children, delay = 0, className = '' }) {
+      const ref = useRef(null);
+      const [visible, setVisible] = useState(false);
+
+      useEffect(() => {
+        const node = ref.current;
+        if (!node) return;
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                setVisible(true);
+                observer.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+        );
+        observer.observe(node);
+        return () => observer.disconnect();
+      }, []);
+
+      return (
+        <div
+          ref={ref}
+          className={`reveal ${visible ? 'is-visible' : ''} ${className}`}
+          style={{ transitionDelay: `${delay}ms` }}
+        >
+          {children}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 Layout — Header / Footer
+    // ========================================
+
+    function Header() {
+      return (
+        <header className="border-b border-hairline">
+          <div className="max-w-4xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
+            <span className="text-base font-semibold tracking-tight text-ink">
+              Claude
+            </span>
+            <span className="text-xs tracking-[0.18em] uppercase text-muted">
+              by Anthropic
+            </span>
+          </div>
+        </header>
+      );
+    }
+
+    function Footer() {
+      return (
+        <footer className="border-t border-hairline mt-24 sm:mt-32">
+          <div className="max-w-4xl mx-auto px-6 sm:px-8 py-12">
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-6">
+              <div>
+                {/* 람스 원칙 오마주: 01–10 넘버링 + "Weniger, aber besser" */}
+                <p className="text-xs tracking-[0.25em] text-muted tabular-nums mb-2">
+                  01 — 10
+                </p>
+                <p className="text-sm text-graphite italic">
+                  Weniger, aber besser.
+                </p>
+                <p className="text-xs text-muted mt-1">
+                  적게, 그러나 더 낫게.
+                </p>
+              </div>
+              <p className="text-xs text-muted">
+                이 페이지는 클로드를 소개하기 위한 예시입니다.
+              </p>
+            </div>
+          </div>
+        </footer>
+      );
+    }
+
+    // ========================================
+    // 📄 Sections — 콘텐츠 (한국어, 사실 근거)
+    // ========================================
+
+    // 1. Hero — 클로드는 누구인가
+    function Hero() {
+      return (
+        <section className="max-w-4xl mx-auto px-6 sm:px-8 pt-20 sm:pt-28 pb-16 sm:pb-20">
+          <Reveal>
+            <p className="text-xs font-medium tracking-[0.25em] uppercase text-muted mb-6">
+              무엇인가
+            </p>
+            <h1 className="text-3xl sm:text-5xl font-semibold tracking-tight text-ink leading-[1.15] max-w-2xl">
+              클로드는 Anthropic이 만든
+              <br className="hidden sm:block" />
+              <span className="text-accent"> AI 어시스턴트</span>입니다.
+            </h1>
+            <p className="mt-8 text-base sm:text-lg text-graphite leading-relaxed max-w-xl">
+              대화를 나누고, 글을 쓰고, 코드를 작성하고, 자료를 분석하거나 요약하는 일을
+              돕는 조력자입니다. 복잡한 것을 단순하게 만드는 데 초점을 둡니다.
+            </p>
+          </Reveal>
+        </section>
+      );
+    }
+
+    // 2. 핵심 가치 — Helpful, Honest, Harmless
+    function Values() {
+      const values = [
+        {
+          num: '01',
+          en: 'Helpful',
+          ko: '도움이 되도록',
+          desc: '사용자의 목표를 이해하고, 실제로 쓸모 있는 답을 하려 합니다.',
+        },
+        {
+          num: '02',
+          en: 'Honest',
+          ko: '정직하도록',
+          desc: '모르는 것은 모른다고 말하고, 사실에 근거해 답하려 합니다.',
+        },
+        {
+          num: '03',
+          en: 'Harmless',
+          ko: '해롭지 않도록',
+          desc: '해가 될 수 있는 요청은 신중히 다루며, 안전과 신뢰를 중시합니다.',
+        },
+      ];
+
+      return (
+        <section className="max-w-4xl mx-auto px-6 sm:px-8 py-16 sm:py-20 border-t border-hairline">
+          <Reveal>
+            <SectionLabel index="02">핵심 가치</SectionLabel>
+            <p className="text-lg sm:text-xl text-ink font-medium leading-relaxed max-w-2xl mb-14">
+              Anthropic은 클로드가 도움이 되고, 정직하며, 해롭지 않도록 설계했습니다.
+            </p>
+          </Reveal>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-hairline border border-hairline">
+            {values.map((v, i) => (
+              <Reveal key={v.en} delay={i * 90}>
+                <div className="bg-paper p-8 h-full">
+                  <div className="flex items-baseline gap-3 mb-5">
+                    <span className="text-xs text-accent tabular-nums tracking-widest">
+                      {v.num}
+                    </span>
+                    <h3 className="text-lg font-semibold text-ink tracking-tight">
+                      {v.en}
+                    </h3>
+                  </div>
+                  <p className="text-sm font-medium text-graphite mb-2">{v.ko}</p>
+                  <p className="text-sm text-graphite leading-relaxed">{v.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    // 3. 할 수 있는 일 — 심플한 카드 그리드
+    function Capabilities() {
+      const items = [
+        { title: '코드 작성 · 디버깅', desc: '여러 언어로 코드를 쓰고, 오류를 찾아 고칩니다.' },
+        { title: '문서 · 글 작성', desc: '이메일부터 보고서까지, 목적에 맞는 글을 씁니다.' },
+        { title: '요약 · 분석', desc: '긴 자료의 핵심을 뽑고, 구조를 짚어 정리합니다.' },
+        { title: '브레인스토밍', desc: '아이디어를 넓히고, 선택지를 함께 정리합니다.' },
+        { title: '번역', desc: '문맥과 뉘앙스를 살펴 자연스럽게 옮깁니다.' },
+        { title: '학습 도우미', desc: '개념을 눈높이에 맞춰 차근차근 설명합니다.' },
+      ];
+
+      return (
+        <section className="max-w-4xl mx-auto px-6 sm:px-8 py-16 sm:py-20 border-t border-hairline">
+          <Reveal>
+            <SectionLabel index="03">할 수 있는 일</SectionLabel>
+          </Reveal>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-hairline border border-hairline">
+            {items.map((item, i) => (
+              <Reveal key={item.title} delay={(i % 3) * 80}>
+                <div className="bg-paper p-7 h-full">
+                  <h3 className="text-base font-semibold text-ink tracking-tight mb-2">
+                    {item.title}
+                  </h3>
+                  <p className="text-sm text-graphite leading-relaxed">{item.desc}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      );
+    }
+
+    // 4. 모델 라인업 — 절제된 리스트 (과장 없이 한 줄 특성)
+    function Models() {
+      const models = [
+        {
+          name: 'Claude Fable 5',
+          note: '가장 뛰어난 능력. 복잡한 추론과 긴 호흡의 작업에 적합합니다.',
+        },
+        {
+          name: 'Claude Sonnet 5',
+          note: '속도와 지능의 균형. 코딩과 일상 작업에 두루 쓰기 좋습니다.',
+        },
+        {
+          name: 'Claude Opus 4.8',
+          note: '강력한 추론. 자율적인 장기 작업에 강합니다.',
+        },
+        {
+          name: 'Claude Haiku 4.5',
+          note: '가장 빠르고 가볍습니다. 간단하고 빠른 작업에 적합합니다.',
+        },
+      ];
+
+      return (
+        <section className="max-w-4xl mx-auto px-6 sm:px-8 py-16 sm:py-20 border-t border-hairline">
+          <Reveal>
+            <SectionLabel index="04">모델 라인업</SectionLabel>
+          </Reveal>
+
+          <div className="border-t border-hairline">
+            {models.map((m, i) => (
+              <Reveal key={m.name} delay={i * 70}>
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.4fr] gap-2 sm:gap-8 py-6 border-b border-hairline">
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-xs text-muted tabular-nums tracking-widest pt-0.5">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <h3 className="text-base sm:text-lg font-semibold text-ink tracking-tight">
+                      {m.name}
+                    </h3>
+                  </div>
+                  <p className="text-sm text-graphite leading-relaxed sm:pl-0 pl-8">
+                    {m.note}
+                  </p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+
+          <Reveal>
+            <p className="text-xs text-muted mt-6">
+              모델 구성은 시간이 지나면 달라질 수 있습니다.
+            </p>
+          </Reveal>
+        </section>
+      );
+    }
+
+    // 5. 조용한 마무리
+    function Closing() {
+      return (
+        <section className="max-w-4xl mx-auto px-6 sm:px-8 py-20 sm:py-28 border-t border-hairline">
+          <Reveal>
+            <p className="text-2xl sm:text-3xl font-medium text-ink tracking-tight leading-snug max-w-xl">
+              필요할 때, <span className="text-accent">조용히</span> 곁에서 돕습니다.
+            </p>
+          </Reveal>
+        </section>
+      );
+    }
+
+    // ========================================
+    // 🚀 App
+    // ========================================
+    function App() {
+      return (
+        <div className="min-h-screen flex flex-col">
+          <Header />
+          <main className="flex-1">
+            <Hero />
+            <Values />
+            <Capabilities />
+            <Models />
+            <Closing />
+          </main>
+          <Footer />
+        </div>
+      );
+    }
+
+    // ========================================
+    // Render
+    // ========================================
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
