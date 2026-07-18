@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>treeview — 프로토타입 v1</title>
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 마인드맵: markmap-view (트리/요약+맵). 아웃라인(markdown)을 직접 트리로 변환해 렌더 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/markmap-view@0.18.10/dist/browser/index.js"></script>
+  <!-- 그물망/클러스터: cytoscape -->
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+
+  <style>
+    :root { --ink:#1f2328; --muted:#6b7280; --line:#eceef1; --bg:#fbfbfa; }
+    html,body{ height:100%; }
+    body{
+      background:var(--bg); color:var(--ink);
+      font-family:'Pretendard','Apple SD Gothic Neo',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      -webkit-font-smoothing:antialiased;
+    }
+    /* 마인드맵 SVG는 컨테이너를 꽉 채움 (fit-to-screen) */
+    .map-svg{ width:100%; height:100%; display:block; touch-action:none; }
+    #cy{ width:100%; height:100%; touch-action:none; }
+    /* 여백 기반 구획: 스크롤바 최소화 */
+    .no-scrollbar::-webkit-scrollbar{ width:6px; height:6px; }
+    .no-scrollbar::-webkit-scrollbar-thumb{ background:#e3e5e8; border-radius:99px; }
+    /* 세그먼트 컨트롤 */
+    .seg{ transition:all .15s ease; }
+    .seg[aria-selected="true"]{ background:#fff; color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); }
+    .seg[aria-selected="false"]{ color:var(--muted); }
+    /* 터치 영역 넉넉하게 */
+    button{ -webkit-tap-highlight-color:transparent; }
+    .fade-in{ animation:fade .25s ease both; }
+    @keyframes fade{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;} }
+  </style>
+</head>
+<body class="antialiased">
+
+  <!-- 모바일 사이드바 오버레이 -->
+  <div id="overlay" class="fixed inset-0 bg-black/20 z-30 hidden"></div>
+
+  <div class="flex h-screen overflow-hidden">
+
+    <!-- ===== 좌측 사이드바 (이전 맵) — 데스크톱 접이식 / 모바일 슬라이드 ===== -->
+    <aside id="sidebar"
+      class="fixed lg:static z-40 h-full w-72 max-w-[80vw] bg-white border-r border-[var(--line)]
+             -translate-x-full lg:translate-x-0 transition-transform duration-200 flex flex-col">
+      <div class="px-4 h-14 flex items-center justify-between border-b border-[var(--line)]">
+        <span class="text-sm font-semibold tracking-tight">이전 맵</span>
+        <button id="newMapBtn" class="text-xs text-[var(--muted)] hover:text-[var(--ink)] px-2 py-1 rounded-md">+ 새로</button>
+      </div>
+      <div class="flex-1 overflow-y-auto no-scrollbar p-2 space-y-1" id="historyList">
+        <!-- 더미 히스토리 -->
+      </div>
+      <div class="p-3 text-[11px] text-[var(--muted)] border-t border-[var(--line)]">
+        프로토타입 · 더미 데이터
+      </div>
+    </aside>
+
+    <!-- ===== 메인 ===== -->
+    <main class="flex-1 flex flex-col min-w-0">
+
+      <!-- 헤더 -->
+      <header class="h-14 shrink-0 flex items-center gap-2 px-3 sm:px-5 border-b border-[var(--line)] bg-[var(--bg)]/80 backdrop-blur">
+        <button id="menuBtn" class="lg:hidden p-2 -ml-1 rounded-md hover:bg-black/5" aria-label="메뉴">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+        </button>
+        <div class="flex items-baseline gap-2">
+          <span class="text-[17px] font-bold tracking-tight">treeview</span>
+          <span class="text-[11px] text-[var(--muted)]">생각정리 · 마인드맵</span>
+        </div>
+        <span class="ml-auto text-[11px] text-[var(--muted)] hidden sm:inline">이번 달 3/20회</span>
+      </header>
+
+      <!-- ====== 입력 화면 ====== -->
+      <section id="inputView" class="flex-1 overflow-y-auto no-scrollbar">
+        <div class="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-14">
+          <h1 class="text-xl sm:text-2xl font-bold tracking-tight mb-1.5">머릿속을 그대로 쏟아보세요</h1>
+          <p class="text-sm text-[var(--muted)] mb-5">두서없는 생각·메모·문서를 붙여넣고 누르면, 핵심 요약과 한 장의 지도로 정리해 드려요.</p>
+
+          <textarea id="inputBox" rows="9"
+            class="w-full resize-none rounded-2xl border border-[var(--line)] bg-white px-4 py-3.5 text-[15px] leading-relaxed
+                   placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+            placeholder="예) 요즘 이직을 해야 하나 계속 고민된다. 지금 회사 3년차인데 일은 익숙한데 성장하는 느낌이 없고..."></textarea>
+
+          <!-- 입력 하단 바 -->
+          <div class="mt-3 flex items-center gap-2">
+            <button id="sampleBtn" class="text-xs px-3 py-2 rounded-lg border border-[var(--line)] bg-white hover:bg-gray-50 text-[var(--muted)]">예시 넣기</button>
+            <label class="text-xs px-3 py-2 rounded-lg border border-[var(--line)] bg-white hover:bg-gray-50 text-[var(--muted)] cursor-pointer">
+              📄 문서 열기
+              <input type="file" accept=".pdf,.txt,.md" class="hidden" id="fileInput"/>
+            </label>
+            <span id="charCount" class="text-[11px] text-gray-400 ml-1">0자</span>
+            <button id="generateBtn"
+              class="ml-auto inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-[var(--ink)] text-white text-sm font-semibold
+                     hover:bg-black active:scale-[.98] transition disabled:opacity-40">
+              <span>생성</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p id="fileNote" class="mt-2 text-[11px] text-[var(--muted)] hidden"></p>
+        </div>
+      </section>
+
+      <!-- ====== 결과 화면 ====== -->
+      <section id="resultView" class="flex-1 flex-col min-h-0 hidden">
+
+        <!-- 결과 상단 컨트롤 -->
+        <div class="shrink-0 px-3 sm:px-5 py-2.5 border-b border-[var(--line)] flex items-center gap-2 flex-wrap">
+          <button id="backBtn" class="p-2 -ml-1 rounded-md hover:bg-black/5" aria-label="뒤로">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M11 18l-6-6 6-6"/></svg>
+          </button>
+
+          <!-- 맵 종류 세그먼트 -->
+          <div id="viewSeg" class="inline-flex items-center gap-0.5 p-0.5 rounded-xl bg-gray-100">
+            <button class="seg text-xs sm:text-sm px-3 py-1.5 rounded-lg font-medium" data-view="summap" aria-selected="true">요약+맵</button>
+            <button class="seg text-xs sm:text-sm px-3 py-1.5 rounded-lg font-medium" data-view="tree" aria-selected="false">트리형</button>
+            <button class="seg text-xs sm:text-sm px-3 py-1.5 rounded-lg font-medium" data-view="web" aria-selected="false">그물망형</button>
+          </div>
+
+          <div class="ml-auto flex items-center gap-1.5">
+            <!-- 맵/아웃라인 토글 -->
+            <button id="outlineToggle" class="text-xs sm:text-sm px-3 py-1.5 rounded-lg border border-[var(--line)] bg-white hover:bg-gray-50 font-medium">
+              📝 아웃라인
+            </button>
+            <button id="fitBtn" class="hidden sm:inline-flex text-xs px-2.5 py-1.5 rounded-lg border border-[var(--line)] bg-white hover:bg-gray-50 text-[var(--muted)]">맞춤</button>
+            <!-- 내보내기 -->
+            <div class="relative">
+              <button id="exportBtn" class="text-xs sm:text-sm px-3 py-1.5 rounded-lg border border-[var(--line)] bg-white hover:bg-gray-50 font-medium">내보내기 ▾</button>
+              <div id="exportMenu" class="hidden absolute right-0 mt-1 w-36 bg-white border border-[var(--line)] rounded-xl shadow-lg py-1 z-20 text-sm">
+                <button class="w-full text-left px-3 py-2 hover:bg-gray-50" data-export="png">🖼 PNG로 저장</button>
+                <button class="w-full text-left px-3 py-2 hover:bg-gray-50" data-export="md">⬇ Markdown 저장</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 결과 본문: 모바일=세로 / 데스크톱(요약+맵)=요약 위 맵 아래 -->
+        <div class="flex-1 min-h-0 flex flex-col">
+
+          <!-- 요약 카드 (접기/펼치기) — summap 뷰에서만 -->
+          <div id="summaryCard" class="shrink-0 border-b border-[var(--line)] bg-white">
+            <button id="summaryToggle" class="w-full flex items-center gap-2 px-4 sm:px-6 py-3 text-left">
+              <span class="text-xs font-semibold text-[var(--muted)] tracking-wide">핵심 요약</span>
+              <svg id="sumChevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="ml-auto text-gray-400 transition-transform"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div id="summaryBody" class="px-4 sm:px-6 pb-4 -mt-1">
+              <p id="summaryText" class="text-[14px] leading-relaxed text-[#333]"></p>
+            </div>
+          </div>
+
+          <!-- 맵 영역 -->
+          <div id="mapArea" class="flex-1 min-h-0 relative bg-white">
+            <!-- markmap (요약+맵 / 트리형) -->
+            <svg id="markmap" class="map-svg"></svg>
+            <!-- cytoscape (그물망형) -->
+            <div id="cy" class="absolute inset-0 hidden"></div>
+            <!-- 아웃라인 텍스트 -->
+            <div id="outlinePane" class="absolute inset-0 hidden overflow-y-auto no-scrollbar bg-white">
+              <div id="outlineText" class="max-w-2xl mx-auto px-5 sm:px-7 py-6 text-[14px] leading-7"></div>
+            </div>
+            <!-- 모바일 하단 힌트 -->
+            <div class="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] text-gray-400 sm:hidden">두 손가락으로 확대 · 노드 탭</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 토스트 -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 bg-[var(--ink)] text-white text-sm px-4 py-2.5 rounded-xl shadow-lg opacity-0 pointer-events-none transition-opacity z-50"></div>
+
+<script>
+/* =========================================================================
+   treeview 프로토타입 v1 — 더미 데이터 (서버·API 없음)
+   실제 v1에서는 이 dummy 객체가 AI 요약 Edge Function의 JSON 응답으로 대체됨:
+   { summary, outline(markdown), nodes[], edges[] }
+   ========================================================================= */
+const DUMMY = {
+  summary: "지금 회사 3년차로 업무엔 익숙하지만 '성장 정체'와 낮은 연봉 인상이 이직을 고민하게 만든 핵심 동기입니다. 이직의 기대(새 기술·연봉·더 큰 조직)와 걱정(적응 리스크·현 팀 관계·안정성)이 팽팽하게 맞서고 있어, 지금 필요한 건 감정이 아니라 '정보'입니다. 먼저 시장을 가볍게 조사해 선택지의 실체를 확인하는 것이 다음 한 걸음입니다.",
+  outline: `# 이직 고민 정리
+## 현재 상황
+- 지금 회사 3년차
+- 업무는 익숙 · 성장 정체감
+- 연봉 인상 폭이 작음
+## 이직 시 기대
+- 새로운 기술 스택 경험
+- 연봉 상승
+- 더 큰 조직 / 제품
+## 걱정되는 것
+- 새 환경 적응 리스크
+- 지금 팀과의 관계
+- 안정성 포기
+## 다음 액션
+- 시장 조사 (JD 10개 훑기)
+- 이력서 업데이트
+- 멘토에게 상담`,
+  nodes: [
+    { id:"core", label:"이직 고민", group:"core", size:34 },
+    { id:"now",  label:"현재 상황", group:"now", size:24 },
+    { id:"n1", label:"3년차·익숙", group:"now", size:16 },
+    { id:"n2", label:"성장 정체", group:"now", size:20 },
+    { id:"n3", label:"낮은 연봉인상", group:"now", size:18 },
+    { id:"exp", label:"기대", group:"exp", size:24 },
+    { id:"e1", label:"새 기술스택", group:"exp", size:16 },
+    { id:"e2", label:"연봉 상승", group:"exp", size:18 },
+    { id:"e3", label:"더 큰 조직", group:"exp", size:16 },
+    { id:"worry", label:"걱정", group:"worry", size:24 },
+    { id:"w1", label:"적응 리스크", group:"worry", size:16 },
+    { id:"w2", label:"팀 관계", group:"worry", size:15 },
+    { id:"w3", label:"안정성", group:"worry", size:16 },
+    { id:"act", label:"다음 액션", group:"act", size:24 },
+    { id:"a1", label:"시장 조사", group:"act", size:18 },
+    { id:"a2", label:"이력서 업데이트", group:"act", size:16 },
+    { id:"a3", label:"멘토 상담", group:"act", size:15 },
+  ],
+  edges: [
+    ["core","now"],["core","exp"],["core","worry"],["core","act"],
+    ["now","n1"],["now","n2"],["now","n3"],
+    ["exp","e1"],["exp","e2"],["exp","e3"],
+    ["worry","w1"],["worry","w2"],["worry","w3"],
+    ["act","a1"],["act","a2"],["act","a3"],
+    // 연관성(범위 a): 서로 다른 묶음 간 연결
+    ["n2","e1"],  // 성장정체 ↔ 새 기술스택 기대
+    ["n3","e2"],  // 낮은연봉 ↔ 연봉상승 기대
+    ["w1","a1"],  // 적응 리스크 ↔ 시장 조사
+  ],
+};
+const GROUP_COLOR = { core:"#111827", now:"#2563eb", exp:"#059669", worry:"#dc2626", act:"#d97706" };
+
+/* ---------- 유틸 ---------- */
+const $ = (s)=>document.querySelector(s);
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.style.opacity="1"; clearTimeout(t._t); t._t=setTimeout(()=>t.style.opacity="0",1600); }
+
+/* ---------- 사이드바 ---------- */
+const sidebar=$("#sidebar"), overlay=$("#overlay");
+function openSidebar(){ sidebar.classList.remove("-translate-x-full"); overlay.classList.remove("hidden"); }
+function closeSidebar(){ sidebar.classList.add("-translate-x-full"); overlay.classList.add("hidden"); }
+$("#menuBtn").onclick=openSidebar;
+overlay.onclick=closeSidebar;
+// 더미 히스토리
+["이직 고민 정리","제품 기획 회의록","독서 메모: 아토믹 해빗","주말 여행 계획"].forEach((t,i)=>{
+  const b=document.createElement("button");
+  b.className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-gray-50 text-sm truncate "+(i===0?"bg-gray-100 font-medium":"text-[#444]");
+  b.textContent=t; b.onclick=()=>{ closeSidebar(); showResult(); };
+  $("#historyList").appendChild(b);
+});
+$("#newMapBtn").onclick=()=>{ closeSidebar(); showInput(); };
+
+/* ---------- 입력 화면 ---------- */
+const inputBox=$("#inputBox");
+inputBox.addEventListener("input",()=> $("#charCount").textContent = inputBox.value.length.toLocaleString()+"자");
+$("#sampleBtn").onclick=()=>{
+  inputBox.value="요즘 이직을 해야 하나 계속 고민된다. 지금 회사 3년차인데 일은 익숙한데 성장하는 느낌이 없고 연봉도 조금밖에 안 올랐다. 옮기면 새 기술도 배우고 연봉도 오르고 더 큰 데서 일할 수 있을 것 같은데, 막상 새 환경에 적응 못하면 어쩌지 싶고 지금 팀 사람들이랑도 좋은데 그걸 두고 나가는 것도 그렇고 안정성도 포기해야 하고... 일단 뭘 해야 할지 모르겠다.";
+  inputBox.dispatchEvent(new Event("input"));
+};
+$("#fileInput").onchange=(e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  $("#fileNote").textContent=`선택됨: ${f.name} — (프로토타입에서는 실제 파싱 대신 예시로 진행)`;
+  $("#fileNote").classList.remove("hidden");
+  $("#sampleBtn").click();
+};
+$("#generateBtn").onclick=()=>{
+  const btn=$("#generateBtn"); btn.disabled=true; btn.querySelector("span").textContent="정리 중…";
+  // 실제로는 여기서 Edge Function 호출. 프로토타입은 짧은 딜레이로 흉내.
+  setTimeout(()=>{ btn.disabled=false; btn.querySelector("span").textContent="생성"; showResult(); }, 550);
+};
+
+/* ---------- 화면 전환 ---------- */
+function showInput(){ $("#resultView").classList.add("hidden"); $("#resultView").classList.remove("flex"); $("#inputView").classList.remove("hidden"); }
+function showResult(){
+  $("#inputView").classList.add("hidden");
+  $("#resultView").classList.remove("hidden"); $("#resultView").classList.add("flex");
+  $("#resultView").classList.add("fade-in");
+  $("#summaryText").textContent=DUMMY.summary;
+  // 아웃라인 모드 초기화 후 한 번만 렌더
+  outlineMode=false; $("#outlineToggle").innerHTML="📝 아웃라인";
+  $("#viewSeg").style.opacity="1"; $("#viewSeg").style.pointerEvents="auto";
+  setView("summap");
+}
+$("#backBtn").onclick=showInput;
+
+/* ---------- 요약 접기/펼치기 ---------- */
+let sumOpen=true;
+$("#summaryToggle").onclick=()=>{
+  sumOpen=!sumOpen;
+  $("#summaryBody").style.display = sumOpen?"block":"none";
+  $("#sumChevron").style.transform = sumOpen?"rotate(0deg)":"rotate(-90deg)";
+  setTimeout(fitCurrent,50);
+};
+
+/* ---------- 뷰(맵 종류) 전환 ---------- */
+let currentView="summap", outlineMode=false, mm=null, cy=null;
+$("#viewSeg").querySelectorAll(".seg").forEach(b=> b.onclick=()=> setView(b.dataset.view));
+function destroyMarkmap(){ if(mm){ try{ mm.destroy(); }catch(e){} mm=null; } const s=$("#markmap"); if(s) s.innerHTML=""; }
+function setView(v){
+  currentView=v;
+  $("#viewSeg").querySelectorAll(".seg").forEach(b=> b.setAttribute("aria-selected", b.dataset.view===v));
+  // 요약 카드는 summap일 때만
+  $("#summaryCard").style.display = (v==="summap" && !outlineMode) ? "block":"none";
+  if(outlineMode){ renderOutline(); return; }
+  $("#outlinePane").classList.add("hidden");
+  const showCy = v==="web";
+  if(showCy){
+    destroyMarkmap();                     // 숨겨진 svg에서 fit(NaN) 나는 것 방지
+    $("#markmap").style.display="none";
+    $("#cy").classList.remove("hidden");
+    renderCy();
+  } else {
+    $("#cy").classList.add("hidden");
+    $("#markmap").style.display="block";
+    renderMarkmap(v);
+  }
+}
+
+/* ---------- 맵/아웃라인 토글 ---------- */
+$("#outlineToggle").onclick=()=> setOutlineMode(!outlineMode);
+function setOutlineMode(on){
+  outlineMode=on;
+  $("#outlineToggle").innerHTML = on ? "🗺 맵" : "📝 아웃라인";
+  $("#viewSeg").style.opacity = on ? ".4":"1";
+  $("#viewSeg").style.pointerEvents = on ? "none":"auto";
+  if(on){
+    $("#summaryCard").style.display="none";
+    destroyMarkmap();
+    $("#markmap").style.display="none";
+    $("#cy").classList.add("hidden");
+    $("#outlinePane").classList.remove("hidden");
+    renderOutline();
+  } else {
+    $("#outlinePane").classList.add("hidden");
+    setView(currentView);
+  }
+}
+
+/* ---------- 아웃라인(markdown) → markmap 트리 ----------
+   실제 v1에서는 AI가 outline(markdown)을 반환하고, 동일 변환으로 맵을 그린다. */
+function mdToTree(md){
+  const lines = md.split("\n").map(l=>l.replace(/\s+$/,"")).filter(l=>l.trim());
+  let root={ content:"정리", children:[] }, lastH2=null;
+  for(const ln of lines){
+    if(ln.startsWith("# ")){ root={ content:ln.slice(2), children:[] }; lastH2=null; }
+    else if(ln.startsWith("## ")){ const n={ content:ln.slice(3), children:[] }; root.children.push(n); lastH2=n; }
+    else if(ln.startsWith("- ")){ const n={ content:ln.slice(2), children:[] }; (lastH2||root).children.push(n); }
+  }
+  return root;
+}
+/* ---------- markmap 렌더 (markmap-view 단독) ---------- */
+function renderMarkmap(v){
+  const mk = window.markmap || {};
+  const svg = $("#markmap");
+  svg.innerHTML="";
+  if(!mk.Markmap){ svg.innerHTML='<text x="20" y="30" fill="#999">마인드맵 라이브러리 로드 실패 (네트워크 확인)</text>'; return; }
+  const data = mdToTree(DUMMY.outline);   // 두 뷰 모두 같은 아웃라인 소스
+  mm = mk.Markmap.create(svg, {
+    autoFit:true, duration:300,
+    initialExpandLevel: v==="summap" ? 2 : -1,   // 요약+맵은 살짝 접힘 / 트리형은 전체 펼침
+    spacingVertical:8, paddingX:16,
+  }, data);
+  setTimeout(()=> { try{ mm && mm.fit(); }catch(e){} }, 60);
+}
+
+/* ---------- cytoscape(그물망) 렌더 ---------- */
+function renderCy(){
+  if(cy){ cy.resize(); cy.fit(undefined,30); return; }
+  cy = cytoscape({
+    container: $("#cy"),
+    elements: [
+      ...DUMMY.nodes.map(n=>({ data:{ id:n.id, label:n.label, group:n.group, size:n.size } })),
+      ...DUMMY.edges.map(([s,t],i)=>({ data:{ id:"e"+i, source:s, target:t } })),
+    ],
+    style:[
+      { selector:"node", style:{
+          "background-color":(e)=>GROUP_COLOR[e.data("group")]||"#666",
+          "label":"data(label)","font-size":11,"color":"#333","text-valign":"bottom","text-margin-y":4,
+          "width":"data(size)","height":"data(size)","font-family":"Pretendard, sans-serif",
+      }},
+      { selector:"edge", style:{ "width":1.5,"line-color":"#d7dbe0","curve-style":"bezier","opacity":.9 } },
+    ],
+    layout:{ name:"cose", animate:false, padding:30, nodeRepulsion:6500, idealEdgeLength:70 },
+    minZoom:.3, maxZoom:2.5,
+  });
+  setTimeout(()=>{ cy.resize(); cy.fit(undefined,30); },60);
+}
+
+/* ---------- 아웃라인 텍스트 렌더 ---------- */
+function renderOutline(){
+  const lines=DUMMY.outline.split("\n");
+  let html="";
+  for(const ln of lines){
+    if(ln.startsWith("# ")) html+=`<div class="text-base font-bold mt-1 mb-2">${ln.slice(2)}</div>`;
+    else if(ln.startsWith("## ")) html+=`<div class="font-semibold mt-3 mb-1 text-[#111]">• ${ln.slice(3)}</div>`;
+    else if(ln.startsWith("- ")) html+=`<div class="ml-5 text-[#444]">– ${ln.slice(2)}</div>`;
+  }
+  $("#outlineText").innerHTML=html;
+}
+
+/* ---------- 맞춤(fit-to-screen) ---------- */
+function fitCurrent(){ if(currentView==="web"&&cy){cy.resize();cy.fit(undefined,30);} else if(mm){mm.fit();} }
+$("#fitBtn").onclick=fitCurrent;
+window.addEventListener("resize",()=> setTimeout(fitCurrent,120));
+
+/* ---------- 내보내기 (프로토타입: MD는 실제 저장, PNG는 흉내) ---------- */
+$("#exportBtn").onclick=(e)=>{ e.stopPropagation(); $("#exportMenu").classList.toggle("hidden"); };
+document.addEventListener("click",()=> $("#exportMenu").classList.add("hidden"));
+$("#exportMenu").querySelectorAll("[data-export]").forEach(b=> b.onclick=()=>{
+  if(b.dataset.export==="md"){
+    const blob=new Blob([DUMMY.outline],{type:"text/markdown"});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="treeview-map.md"; a.click();
+    toast("Markdown 저장 완료");
+  } else {
+    toast("PNG 내보내기는 실제 v1에서 맵 캡처로 구현됩니다");
+  }
+});
+
+/* 시작: 입력 화면 */
+showInput();
+</script>
+</body>
+</html>
