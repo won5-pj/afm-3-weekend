@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>클로드(Claude) — Anthropic의 AI 어시스턴트 (컴포넌트 분리판)</title>
+
+  <!-- ⚠️ 모든 CDN은 버전을 명시적으로 고정한다. 미고정 시 @babel/standalone 이
+       최신(8.x)으로 올라가 type="text/babel" 변환이 통째로 깨진다.
+       Babel 은 반드시 7.x 로 고정한다. React/ReactDOM 도 정확히 핀. -->
+  <script src="https://cdn.tailwindcss.com/3.4.16"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.9/babel.min.js"></script>
+
+  <script>
+    // Tailwind 커스텀 설정 — 브루탈리즘 하드 섀도우 & 원색 팔레트
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"Courier New"', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            brutal: {
+              yellow: '#FFE100',
+              red:    '#FF4B33',
+              blue:   '#2E5BFF',
+              green:  '#00E070',
+              pink:   '#FF6FD8',
+              cream:  '#FAF7EF',
+            },
+          },
+          boxShadow: {
+            'brutal':    '8px 8px 0 0 #000',
+            'brutal-sm': '4px 4px 0 0 #000',
+            'brutal-lg': '12px 12px 0 0 #000',
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- 마퀴/눌림/커서 등 Tailwind 로 표현하기 어려운 CSS -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="root"></div>
+
+  <!--
+    컴포넌트 파일들을 의존성 순서대로 로드한다.
+    - 각 파일은 type="text/babel" 로 로드되어 브라우저에서 JSX 변환됨
+    - Babel standalone 이 문서 순서대로 실행 → 앞 컴포넌트가 뒤에서 참조 가능
+    - main.jsx 는 반드시 맨 마지막 (모든 컴포넌트 정의 후 렌더)
+
+    ⚠️ 외부 text/babel 스크립트는 fetch 로 불러오므로 file:// 더블클릭으로는
+       CORS 때문에 로드되지 않는다. 반드시 로컬 서버로 열 것 (README 참고).
+  -->
+
+  <!-- 1) 디자인 시스템 프리미티브 -->
+  <script type="text/babel" src="components/Box.jsx"></script>
+  <script type="text/babel" src="components/Button.jsx"></script>
+  <script type="text/babel" src="components/Badge.jsx"></script>
+  <script type="text/babel" src="components/SectionTitle.jsx"></script>
+
+  <!-- 2) 레이아웃 -->
+  <script type="text/babel" src="components/Header.jsx"></script>
+  <script type="text/babel" src="components/Marquee.jsx"></script>
+  <script type="text/babel" src="components/Footer.jsx"></script>
+
+  <!-- 3) 섹션 -->
+  <script type="text/babel" src="components/Hero.jsx"></script>
+  <script type="text/babel" src="components/CanDo.jsx"></script>
+  <script type="text/babel" src="components/Models.jsx"></script>
+  <script type="text/babel" src="components/Where.jsx"></script>
+  <script type="text/babel" src="components/Values.jsx"></script>
+  <script type="text/babel" src="components/CTA.jsx"></script>
+
+  <!-- 4) 조립 + 렌더 -->
+  <script type="text/babel" src="components/App.jsx"></script>
+  <script type="text/babel" src="main.jsx"></script>
+</body>
+</html>

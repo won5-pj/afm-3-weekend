@@ -1,0 +1,25 @@
+/* Tailwind 로 표현하기 어려운 것만 CSS 사용: 마퀴 애니메이션, 스크롤 동작 */
+html { scroll-behavior: smooth; }
+body { background: #FAF7EF; }
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.marquee-track {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee 18s linear infinite;
+}
+.marquee-wrap:hover .marquee-track { animation-play-state: paused; }
+
+/* 브루탈리즘 눌림 인터랙션 — 그림자 사라지며 아래로 눌림 */
+.press {
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.press:hover { transform: translate(4px, 4px); box-shadow: 0 0 0 0 #000 !important; }
+.press:active { transform: translate(6px, 6px); }
+
+/* 커서 깜빡임 (히어로 타이핑 느낌) */
+@keyframes blink { 0%,49% { opacity:1 } 50%,100% { opacity:0 } }
+.cursor { animation: blink 1s step-end infinite; }
