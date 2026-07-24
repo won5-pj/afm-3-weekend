@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+  :root{ --green:#00C471; --green-deep:#0E3B2E; --bg:#EEF3F0; --ink:#18211D; --muted:#7A8A81; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{ font-family:"Pretendard","Malgun Gothic",-apple-system,sans-serif; background:var(--bg);
+        -webkit-font-smoothing:antialiased; }
+  .phone{ width:1040px; margin:0 auto; background:#F7FAF8; }
+
+  /* 헤더 */
+  .bar{ background:linear-gradient(135deg,var(--green),#00A862); color:#fff; padding:34px 40px;
+        display:flex; align-items:center; gap:20px; }
+  .bar .ava{ width:74px; height:74px; border-radius:20px; background:rgba(255,255,255,.2);
+             display:flex; align-items:center; justify-content:center; font-weight:900; font-size:34px;
+             border:2px solid rgba(255,255,255,.5); }
+  .bar .t1{ font-weight:900; font-size:36px; letter-spacing:-.5px; }
+  .bar .t2{ font-size:24px; opacity:.9; margin-top:4px; font-weight:600; }
+  .bar .live{ margin-left:auto; font-size:22px; font-weight:700; background:rgba(255,255,255,.22);
+              padding:10px 20px; border-radius:999px; }
+
+  .thread{ padding:44px 40px 60px; display:flex; flex-direction:column; gap:36px; }
+  .daytag{ align-self:center; font-size:22px; color:var(--muted); font-weight:700;
+           background:#E6EEE9; padding:8px 22px; border-radius:999px; }
+
+  .row{ display:flex; gap:18px; align-items:flex-end; max-width:82%; }
+  .row .av{ width:58px; height:58px; border-radius:16px; flex:0 0 auto; display:flex;
+            align-items:center; justify-content:center; font-weight:900; font-size:26px; color:#fff; }
+  .bubble{ padding:26px 30px; border-radius:26px; font-size:29px; line-height:1.52; font-weight:500;
+           letter-spacing:-.3px; box-shadow:0 6px 18px rgba(20,60,40,.06); }
+  .bubble b{ font-weight:800; color:var(--green-deep); }
+  .bubble .em{ color:var(--green); font-weight:800; }
+
+  /* 상대(에이전트=Claude) 왼쪽 */
+  .ai{ align-self:flex-start; }
+  .ai .av{ background:linear-gradient(145deg,var(--green),#00A862); }
+  .ai .bubble{ background:#fff; color:var(--ink); border-bottom-left-radius:8px; }
+
+  /* 나(오상원) 오른쪽 */
+  .me{ align-self:flex-end; flex-direction:row-reverse; }
+  .me .av{ background:#2B3A33; }
+  .me .bubble{ background:var(--green); color:#fff; border-bottom-right-radius:8px; }
+  .me .bubble b{ color:#fff; text-decoration:underline; text-underline-offset:4px; }
+
+  .card-preview{ background:#F0F8F3; border:2px dashed #9FDDBF; border-radius:20px; padding:20px 24px;
+                 margin-top:16px; font-size:25px; color:var(--green-deep); font-weight:700; }
+  .foot{ text-align:center; padding:22px; font-size:22px; color:var(--muted); font-weight:600;
+         border-top:1px solid #E6EEE9; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="bar">
+      <div class="ava">C</div>
+      <div>
+        <div class="t1">명함 디자인 · Claude</div>
+        <div class="t2">week-8 / quest / mycard</div>
+      </div>
+      <div class="live">● 작업 중</div>
+    </div>
+
+    <div class="thread">
+      <div class="daytag">오늘 · 명함 만들기</div>
+
+      <!-- 1. 유저 요청 -->
+      <div class="row me">
+        <div class="av">오</div>
+        <div class="bubble">
+          <b>처음 만난 사람이 나를 알 수 있는 명함</b>을 디자인해줘.<br>
+          앞/뒤 이미지 + <b>"나를 한 단어로 정의하면 ___"</b> 한 줄 컨셉,
+          그리고 에이전트와의 대화 스크린샷까지 넣어줘.
+        </div>
+      </div>
+
+      <!-- 2. 에이전트 질문 -->
+      <div class="row ai">
+        <div class="av">C</div>
+        <div class="bubble">
+          좋아요! 명함의 심장인 <span class="em">'한 단어'</span>랑 톤은 오상원 님 정체성에 관한 거라
+          제가 임의로 정하기보다 딱 두 가지만 여쭤볼게요 🙂<br>
+          ① <b>한 단어 컨셉</b> — 연결 / 성장 / 흐름?<br>
+          ② <b>디자인 톤</b> — 다크+골드 / 클린 화이트 / 볼드 컬러?
+        </div>
+      </div>
+
+      <!-- 3. 유저 답변 -->
+      <div class="row me">
+        <div class="av">오</div>
+        <div class="bubble">
+          <b>성장(Growth)</b>! 성장이랑 <b>열정</b>을 강조하고 싶어.<br>
+          전화 010-2574-8001, 직함 사원.<br>
+          톤은 <b>토스처럼 시원하게, 그린 계열</b>로.
+          90×54mm 표준, 앞/뒤, 강조 포인트는 딱 1개만.
+          뒷면엔 창의적인 슬로건이랑 QR 넣어줘.<br>
+          캡처는 <b>지금 이 대화</b>로 해줘.
+        </div>
+      </div>
+
+      <!-- 4. 에이전트 확정 -->
+      <div class="row ai">
+        <div class="av">C</div>
+        <div class="bubble">
+          확정했어요! ✅<br>
+          <span class="em">성장(Growth)</span> · 그린 · 토스풍 · 90×54mm · 강조 1개(성장)<br>
+          앞면(연락처+상승 그래프) · 뒷면(슬로건+QR)까지 지금 만들게요.
+          <div class="card-preview">🌱 컨셉 확정 : "나를 한 단어로 정의하면 — 성장"</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">— 명함 요구사항이 이 대화에서 확정되었습니다 · Claude Code —</div>
+  </div>
+</body>
+</html>

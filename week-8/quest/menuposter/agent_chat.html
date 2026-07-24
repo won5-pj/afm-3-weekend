@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+  :root{ --green:#C6612E; --green-deep:#5a2c12; --accent:#608E2C; --bg:#F4EEE4; --ink:#2b211a; --muted:#8b7a68; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{ font-family:"Pretendard","Malgun Gothic",-apple-system,sans-serif; background:var(--bg);
+        -webkit-font-smoothing:antialiased; }
+  .phone{ width:1040px; margin:0 auto; background:#FBF7EF; }
+
+  .bar{ background:linear-gradient(135deg,#C6612E,#df4d30); color:#fff; padding:34px 40px;
+        display:flex; align-items:center; gap:20px; }
+  .bar .ava{ width:74px; height:74px; border-radius:20px; background:rgba(255,255,255,.2);
+             display:flex; align-items:center; justify-content:center; font-weight:900; font-size:34px;
+             border:2px solid rgba(255,255,255,.5); }
+  .bar .t1{ font-weight:900; font-size:36px; letter-spacing:-.5px; }
+  .bar .t2{ font-size:24px; opacity:.9; margin-top:4px; font-weight:600; }
+  .bar .live{ margin-left:auto; font-size:22px; font-weight:700; background:rgba(255,255,255,.22);
+              padding:10px 20px; border-radius:999px; }
+
+  .thread{ padding:44px 40px 56px; display:flex; flex-direction:column; gap:34px; }
+  .daytag{ align-self:center; font-size:22px; color:var(--muted); font-weight:700;
+           background:#EAE0D2; padding:8px 22px; border-radius:999px; }
+
+  .row{ display:flex; gap:18px; align-items:flex-end; max-width:84%; }
+  .row .av{ width:58px; height:58px; border-radius:16px; flex:0 0 auto; display:flex;
+            align-items:center; justify-content:center; font-weight:900; font-size:26px; color:#fff; }
+  .bubble{ padding:26px 30px; border-radius:26px; font-size:28px; line-height:1.55; font-weight:500;
+           letter-spacing:-.3px; box-shadow:0 6px 18px rgba(90,44,18,.06); }
+  .bubble b{ font-weight:800; color:var(--green-deep); }
+  .bubble .em{ color:var(--accent); font-weight:800; }
+
+  .ai{ align-self:flex-start; }
+  .ai .av{ background:linear-gradient(145deg,#C6612E,#df4d30); }
+  .ai .bubble{ background:#fff; color:var(--ink); border-bottom-left-radius:8px; }
+
+  .me{ align-self:flex-end; flex-direction:row-reverse; }
+  .me .av{ background:#3a2c20; }
+  .me .bubble{ background:#C6612E; color:#fff; border-bottom-right-radius:8px; }
+  .me .bubble b{ color:#fff; text-decoration:underline; text-underline-offset:4px; }
+
+  .spec{ background:#F1F8E9; border:2px dashed #A9CE7A; border-radius:20px; padding:22px 26px;
+         margin-top:16px; font-size:25px; color:#3c5220; font-weight:600; line-height:1.7; }
+  .spec b{ color:#33481a; }
+  .foot{ text-align:center; padding:24px; font-size:22px; color:var(--muted); font-weight:600;
+         border-top:1px solid #EAE0D2; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="bar">
+      <div class="ava">C</div>
+      <div>
+        <div class="t1">신메뉴 포스터 · Claude</div>
+        <div class="t2">week-8 / quest / menuposter</div>
+      </div>
+      <div class="live">● 작업 중</div>
+    </div>
+
+    <div class="thread">
+      <div class="daytag">오늘 · 카페 신메뉴 포스터 만들기</div>
+
+      <!-- 1. 유저 요청 -->
+      <div class="row me">
+        <div class="av">오</div>
+        <div class="bubble">
+          카페에 내놓을 <b>신메뉴 포스터</b> 만들어줘. 메뉴는 <b>디저트 빵</b>인데
+          네가 <b>직접 검색하고 판단</b>해서 정해줘. 이미지는 꼭 <b>실사에 가깝게</b>!<br>
+          결과물은 포스터(PNG/PDF) + 인스타 스토리·단톡방 게시 캡처 + 에이전트 대화 캡처.
+          디자인은 <b>Gemini 2.5 Flash Image</b>, 스토리 캡처는 <b>Playwright</b>로.
+        </div>
+      </div>
+
+      <!-- 2. 에이전트 리서치 -->
+      <div class="row ai">
+        <div class="av">C</div>
+        <div class="bubble">
+          트렌드부터 조사했어요 🔎 2025~26 디저트 최대 화제는
+          <span class="em">두바이 피스타치오</span> 조합 — 오픈런·하루 품절 행렬이에요.
+          여기에 스테디셀러 <span class="em">소금빵</span>을 얹으면 신상 화제성 + 실사 비주얼 + 명확한 구매이유가
+          한 번에 잡힙니다.<br>그래서 메뉴를 이렇게 정했어요 👇
+          <div class="spec">
+            🥐 <b>두바이 피스타치오 소금빵</b> · ₩4,800<br>
+            메인카피 <b>“겉은 바삭, 속은 두바이”</b><br>
+            구매이유 <b>시즌 한정 · 하루 30개</b> · 사이즈 <b>1080×1350</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 에이전트 제작 -->
+      <div class="row ai">
+        <div class="av">C</div>
+        <div class="bubble">
+          제작 방식은 — <b>Gemini 2.5 Flash Image</b>로 김 나는 실사 히어로컷을 2종 뽑고
+          (텍스트 없는 순수 사진), 그 위에 <b>PIL + Black Han Sans</b>로 한글 타이포를 픽셀 단위로 합성했어요.
+          한글은 이미지모델이 자주 깨뜨려서 <span class="em">글자는 코드로</span> 얹는 게 안전하거든요.
+        </div>
+      </div>
+
+      <!-- 4. 완료 -->
+      <div class="row ai">
+        <div class="av">C</div>
+        <div class="bubble">
+          완성했습니다! ✅<br>
+          · 포스터 <b>v1 / v2</b> (PNG + 인쇄용 PDF, 1080×1350)<br>
+          · <b>인스타 스토리</b> 게시 화면 — Playwright로 캡처<br>
+          · <b>단톡방</b> 공유 화면 + 지금 이 <b>대화 캡처</b>까지<br>
+          사진이 포스터의 절반 이상, 빅 타이포 + 강조색으로 5초 안에 시선 잡히게 뽑았어요 🙌
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">— 신메뉴 컨셉·문구가 이 대화에서 확정·제작되었습니다 · Claude Code —</div>
+  </div>
+</body>
+</html>

@@ -15,6 +15,10 @@ node_modules/
 # Logs
 *.log
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Supabase MCP config (개인 액세스 토큰 포함 - 커밋 금지)
 .mcp.json
 

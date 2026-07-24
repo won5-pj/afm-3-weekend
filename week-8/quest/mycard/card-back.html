@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+  @font-face{ font-family:"PretendardLocal"; src:url("fonts/Pretendard-Black.woff2") format("woff2"); font-weight:900; }
+  @font-face{ font-family:"PretendardLocal"; src:url("fonts/Pretendard-ExtraBold.woff2") format("woff2"); font-weight:800; }
+
+  :root{ --green:#00C471; --green-deep:#0E3B2E; }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ background:#cfd8d2; }
+  body{ font-family:"Pretendard","PretendardLocal","Malgun Gothic",-apple-system,sans-serif;
+        -webkit-font-smoothing:antialiased; }
+
+  .card{
+    position:relative; width:1800px; height:1080px; overflow:hidden; color:#fff;
+    background:
+      radial-gradient(1100px 800px at 8% -10%, #17D98A 0%, transparent 55%),
+      radial-gradient(1000px 900px at 100% 120%, #069E5B 0%, transparent 55%),
+      linear-gradient(140deg,#06C270 0%, #009E5C 100%);
+  }
+  /* 배경 성장 워터마크 (상승 라인) */
+  .wm{ position:absolute; inset:0; opacity:.16; }
+  .bigword{ position:absolute; right:-40px; bottom:-140px; font-weight:900; font-size:520px;
+            color:#fff; opacity:.06; letter-spacing:-20px; line-height:.8; }
+
+  .pad{ position:absolute; inset:0; padding:130px 140px; display:flex; align-items:center;
+        justify-content:space-between; gap:80px; }
+
+  /* 좌측 슬로건 */
+  .left{ max-width:1000px; }
+  .quotemark{ font-size:150px; font-weight:900; line-height:.5; color:rgba(255,255,255,.55);
+              height:70px; }
+  .headline{ font-weight:900; font-size:118px; line-height:1.06; letter-spacing:-4px;
+             text-shadow:0 12px 30px rgba(0,80,45,.25); }
+  .headline .hl{ color:#0E3B2E; background:#fff; padding:2px 22px; border-radius:20px;
+                 box-shadow:0 14px 30px rgba(0,70,40,.22); }
+  .sub{ margin-top:44px; font-size:42px; font-weight:600; line-height:1.5;
+        color:rgba(255,255,255,.94); letter-spacing:-.5px; }
+  .sub b{ font-weight:800; color:#EAFFF5; }
+  .chips{ margin-top:52px; display:flex; gap:18px; }
+  .chip{ font-size:30px; font-weight:800; letter-spacing:1px; padding:16px 34px; border-radius:999px;
+         background:rgba(255,255,255,.16); border:2px solid rgba(255,255,255,.35); }
+
+  /* 우측 QR 카드 */
+  .qrcard{ background:#fff; border-radius:44px; padding:52px 52px 40px; text-align:center;
+           box-shadow:0 40px 80px rgba(0,60,35,.35); flex:0 0 auto; }
+  .qrcard img{ width:420px; height:420px; display:block; }
+  .qrcard .scan{ margin-top:26px; font-size:40px; font-weight:900; color:var(--green-deep);
+                 letter-spacing:-1px; }
+  .qrcard .scan b{ color:var(--green); }
+  .qrcard .desc{ margin-top:8px; font-size:26px; font-weight:600; color:#7C8B83; }
+
+  /* 하단 서명 */
+  .sign{ position:absolute; left:140px; bottom:70px; display:flex; align-items:center; gap:22px;
+         font-size:34px; font-weight:700; letter-spacing:.5px; }
+  .sign .seed{ font-size:40px; }
+  .sign .name{ font-weight:900; }
+  .sign .div{ opacity:.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <!-- 성장 워터마크 라인 -->
+    <svg class="wm" viewBox="0 0 1800 1080" fill="none" preserveAspectRatio="xMidYMid slice">
+      <path d="M-50 980 L360 820 L640 640 L980 470 L1360 260 L1900 60" stroke="#fff" stroke-width="10"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="360" cy="820" r="14" fill="#fff"/>
+      <circle cx="640" cy="640" r="14" fill="#fff"/>
+      <circle cx="980" cy="470" r="14" fill="#fff"/>
+      <circle cx="1360" cy="260" r="14" fill="#fff"/>
+    </svg>
+    <div class="bigword">成長</div>
+
+    <div class="pad">
+      <div class="left">
+        <div class="quotemark">&ldquo;</div>
+        <div class="headline">완성형이 아니라,<br><span class="hl">성장형</span>입니다.</div>
+        <div class="sub">
+          어제보다 딱 <b>1cm</b> 더 — 읽고, 배우고, 자랍니다.<br>
+          <b>성장은 습관, 열정은 기본값(default)</b>이니까요.
+        </div>
+        <div class="chips">
+          <span class="chip">📖 매일 독서</span>
+          <span class="chip">🚀 자기개발</span>
+          <span class="chip">🌱 진행형</span>
+        </div>
+      </div>
+
+      <div class="qrcard">
+        <img src="assets/qr.png" alt="연락처 QR">
+        <div class="scan">SCAN → <b>연락처 저장</b></div>
+        <div class="desc">스캔하면 오상원의 명함이 저장돼요</div>
+      </div>
+    </div>
+
+    <div class="sign">
+      <span class="seed">🌱</span>
+      <span class="name">오상원</span><span class="div">·</span>
+      <span>사원 · TLS</span><span class="div">·</span>
+      <span>GROWTH &amp; PASSION</span>
+    </div>
+  </div>
+</body>
+</html>

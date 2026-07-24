@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  body{ font-family:"Pretendard","Malgun Gothic",sans-serif; -webkit-font-smoothing:antialiased; }
+  .phone{ width:1040px; margin:0 auto; background:#9bb5ce; }
+
+  /* 상단바 */
+  .nav{ background:#9bb5ce; padding:30px 34px 20px; display:flex; align-items:center; gap:22px; }
+  .nav .bk{ font-size:44px; color:#1b1b1b; font-weight:400; }
+  .nav .tt{ font-size:36px; font-weight:800; color:#141414; letter-spacing:-.5px; }
+  .nav .tt small{ font-weight:600; color:#4b5a68; font-size:32px; margin-left:8px; }
+  .nav .rt{ margin-left:auto; display:flex; gap:26px; color:#1b1b1b; font-size:38px; }
+
+  .thread{ padding:20px 30px 60px; display:flex; flex-direction:column; gap:26px; }
+  .date{ align-self:center; background:rgba(0,0,0,.18); color:#fff; font-size:24px; font-weight:600;
+         padding:8px 26px; border-radius:999px; margin:10px 0; }
+
+  .row{ display:flex; gap:18px; max-width:78%; }
+  .row .av{ width:78px; height:78px; border-radius:24px; flex:0 0 auto; display:flex;
+            align-items:center; justify-content:center; font-size:38px; background:#dfe7ef; }
+  .nm{ font-size:26px; color:#33404d; font-weight:600; margin:2px 0 10px 2px; }
+  .msg{ display:flex; align-items:flex-end; gap:12px; }
+  .bubble{ background:#fff; border-radius:8px 22px 22px 22px; padding:22px 28px; font-size:30px;
+           line-height:1.5; color:#111; font-weight:500; letter-spacing:-.3px; max-width:640px;
+           box-shadow:0 2px 4px rgba(0,0,0,.08); }
+  .time{ font-size:21px; color:#54606c; white-space:nowrap; }
+  .rd{ font-size:21px; color:#f7e600; -webkit-text-stroke:.5px #b9ad00; white-space:nowrap; }
+
+  /* 나 (오른쪽, 노랑) */
+  .me{ align-self:flex-end; flex-direction:row-reverse; max-width:82%; }
+  .me .msg{ flex-direction:row-reverse; }
+  .me .bubble{ background:#fae100; border-radius:22px 8px 22px 22px; }
+  .me .imgb{ background:#fae100; }
+
+  .imgb{ background:#fff; border-radius:22px 8px 22px 22px; padding:12px; box-shadow:0 2px 6px rgba(0,0,0,.12); }
+  .imgb img{ width:430px; height:auto; display:block; border-radius:14px; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="nav">
+      <span class="bk">‹</span>
+      <span class="tt">☕ 성수동 카페 사장님 모임<small>24</small></span>
+      <span class="rt">🔍 ☰</span>
+    </div>
+
+    <div class="thread">
+      <div class="date">2026년 7월 25일 금요일</div>
+
+      <!-- 나: 공지 -->
+      <div class="row me">
+        <div class="msg">
+          <div class="bubble">우리 신메뉴 드디어 나왔어요!! 🥐🔥<br>두바이 열풍에 소금빵 얹었습니다ㅋㅋ</div>
+          <div class="rd">1</div><div class="time">오후 2:14</div>
+        </div>
+      </div>
+      <!-- 나: 포스터 이미지 -->
+      <div class="row me">
+        <div class="msg">
+          <div class="imgb"><img src="두바이소금빵_포스터_v1.png" alt="poster"></div>
+          <div><div class="rd">1</div><div class="time">오후 2:14</div></div>
+        </div>
+      </div>
+
+      <!-- 미나 -->
+      <div class="row">
+        <div class="av">👩🏻</div>
+        <div>
+          <div class="nm">미나 · 블루문 로스터리</div>
+          <div class="msg">
+            <div class="bubble">헐 이거 두바이 소금빵이에요?? 비주얼 실화냐 😍<br>피스타치오 흘러내리는 거 미쳤다…</div>
+            <div class="time">오후 2:16</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 재현 -->
+      <div class="row">
+        <div class="av">🧑🏻</div>
+        <div>
+          <div class="nm">재현 · 언덕위카페</div>
+          <div class="msg">
+            <div class="bubble">가격도 착하네요 4,800원 실화?<br>이번 주말에 성수 갈 때 무조건 들릅니다 🙋‍♂️</div>
+            <div class="time">오후 2:17</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 나: 답 -->
+      <div class="row me">
+        <div class="msg">
+          <div class="bubble">성수점 <b>하루 30개 한정</b>이라 오픈런 추천요 ㅎㅎ<br>인스타 스토리에도 올려놨어요!</div>
+          <div class="time">오후 2:18</div>
+        </div>
+      </div>
+
+      <!-- 소연 -->
+      <div class="row">
+        <div class="av">👧🏻</div>
+        <div>
+          <div class="nm">소연 · 데일리컵</div>
+          <div class="msg">
+            <div class="bubble">스토리 보고 왔어요 ㅋㅋㅋ 저장 완료 📌<br>우리 손님들한테도 공유해도 되죠?</div>
+            <div class="time">오후 2:19</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

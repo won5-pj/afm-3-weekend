@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ background:#111; }
+  .phone{
+    position:relative; width:1080px; height:1920px; overflow:hidden;
+    font-family:"Pretendard","Malgun Gothic",-apple-system,sans-serif;
+    background:
+      radial-gradient(120% 80% at 50% 22%, #3a2f1f 0%, #1a140d 55%, #0b0805 100%);
+    -webkit-font-smoothing:antialiased;
+  }
+  /* 상단 진행바 */
+  .progress{ position:absolute; top:26px; left:24px; right:24px; display:flex; gap:8px; z-index:5; }
+  .progress i{ flex:1; height:6px; border-radius:99px; background:rgba(255,255,255,.35); }
+  .progress i.on{ background:#fff; }
+  .progress i.half{ background:linear-gradient(90deg,#fff 62%, rgba(255,255,255,.35) 62%); }
+
+  /* 헤더 */
+  .head{ position:absolute; top:56px; left:26px; right:26px; display:flex; align-items:center;
+         gap:20px; z-index:5; color:#fff; }
+  .ring{ width:88px; height:88px; border-radius:50%; padding:4px;
+         background:conic-gradient(from 210deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75); }
+  .ring>span{ display:flex; width:100%; height:100%; border-radius:50%; align-items:center;
+         justify-content:center; background:#2a2016; font-size:44px; border:3px solid #1a140d; }
+  .who{ display:flex; flex-direction:column; line-height:1.15; }
+  .who b{ font-size:34px; font-weight:800; letter-spacing:-.3px; }
+  .who small{ font-size:27px; font-weight:500; color:rgba(255,255,255,.72); margin-top:3px; }
+  .who small span{ color:rgba(255,255,255,.55); }
+  .hicons{ margin-left:auto; display:flex; gap:26px; align-items:center; }
+  .hicons svg{ width:44px; height:44px; stroke:#fff; fill:none; stroke-width:2.4; }
+
+  /* 포스터 */
+  .poster{ position:absolute; top:238px; left:0; width:1080px; z-index:2; }
+  .poster img{ width:1080px; height:1350px; display:block; border-radius:26px;
+               box-shadow:0 30px 80px rgba(0,0,0,.55); }
+
+  /* 스티커: NEW 실링 */
+  .seal{ position:absolute; top:300px; right:70px; z-index:4; width:196px; height:196px;
+         transform:rotate(13deg); }
+  .seal svg{ width:100%; height:100%; filter:drop-shadow(0 8px 18px rgba(0,0,0,.35)); }
+  .seal .txt{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+         justify-content:center; color:#fff; font-weight:900; }
+  .seal .txt b{ font-size:58px; line-height:1; letter-spacing:1px; }
+  .seal .txt small{ font-size:24px; letter-spacing:3px; margin-top:6px; }
+
+  /* 위치 스티커 */
+  .loc{ position:absolute; left:50%; transform:translateX(-50%); top:1622px; z-index:4;
+        display:flex; align-items:center; gap:14px; padding:18px 34px; border-radius:999px;
+        background:linear-gradient(135deg,#feda75,#fa7e1e,#d62976);
+        color:#fff; font-weight:800; font-size:31px; letter-spacing:-.2px;
+        box-shadow:0 12px 30px rgba(0,0,0,.4); }
+  .loc svg{ width:34px; height:34px; fill:#fff; }
+
+  /* 하단 답장 바 */
+  .reply{ position:absolute; left:26px; right:26px; bottom:56px; display:flex; align-items:center;
+          gap:24px; z-index:5; }
+  .box{ flex:1; height:96px; border-radius:999px; border:2px solid rgba(255,255,255,.55);
+        display:flex; align-items:center; padding:0 40px; color:rgba(255,255,255,.85);
+        font-size:32px; font-weight:500; }
+  .reply .act{ display:flex; gap:26px; }
+  .reply .act svg{ width:52px; height:52px; stroke:#fff; fill:none; stroke-width:2.2; }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="progress"><i class="on"></i><i class="half"></i><i></i></div>
+
+    <div class="head">
+      <div class="ring"><span>🥐</span></div>
+      <div class="who">
+        <b>saltbloom_bakery</b>
+        <small>13분 <span>· 소금꽃 베이커리</span></small>
+      </div>
+      <div class="hicons">
+        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="#fff" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="#fff" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="#fff" stroke="none"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+    </div>
+
+    <div class="poster"><img src="두바이소금빵_포스터_v2.png" alt="poster"></div>
+
+    <div class="seal">
+      <svg viewBox="0 0 100 100"><path d="M50 2 61 14 77 9 79 26 95 32 86 46 95 60 79 66 77 83 61 78 50 90 39 78 23 83 21 66 5 60 14 46 5 32 21 26 23 9 39 14z" fill="#df4d30"/></svg>
+      <div class="txt"><b>NEW</b><small>8월 신메뉴</small></div>
+    </div>
+
+    <div class="loc">
+      <svg viewBox="0 0 24 24"><path d="M12 2C8 2 5 5 5 9c0 5 7 13 7 13s7-8 7-13c0-4-3-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"/></svg>
+      소금꽃 베이커리 · 성수점
+    </div>
+
+    <div class="reply">
+      <div class="box">메시지 보내기…</div>
+      <div class="act">
+        <svg viewBox="0 0 24 24"><path d="M12 21s-8-5.3-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.7-8 11-8 11z"/></svg>
+        <svg viewBox="0 0 24 24"><path d="M22 3 11 14M22 3l-7 19-4-8-8-4 19-7z"/></svg>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
